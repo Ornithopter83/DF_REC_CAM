@@ -253,6 +253,7 @@ public sealed partial class MainForm : Form
 
     private void InitializeApp()
     {
+        ApplyApplicationIcon();
         InitializeTrayIcon();
         _paths = new AppPaths(_settings.Storage);
         _paths.Ensure();
@@ -279,6 +280,21 @@ public sealed partial class MainForm : Form
         lblLastFrame.Text = "마지막 프레임: 없음";
         UpdateControlStates();
         ScheduleAutoStartFullRecording();
+    }
+
+    private void ApplyApplicationIcon()
+    {
+        try
+        {
+            using var appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            if (appIcon is not null)
+            {
+                Icon = (Icon)appIcon.Clone();
+            }
+        }
+        catch
+        {
+        }
     }
 
     private void InitializeTrayIcon()
