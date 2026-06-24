@@ -26,6 +26,7 @@ public sealed partial class MainForm : Form
     private bool _fullRecordingRequested;
     private DateTime _nextFullRecordingRotationAt = DateTime.MinValue;
     private Mat? _latestFrame;
+    private readonly object _latestFrameSync = new();
     private DateTime _currentRecordingStartedAt;
     private string _currentTriggerReason = "";
     private double _maxMotionScore;
@@ -177,6 +178,7 @@ public sealed partial class MainForm : Form
         FormClosing += MainForm_FormClosing;
         Resize += MainForm_Resize;
         KeyDown += MainForm_KeyDown;
+        sidePanel.SizeChanged += (_, _) => PositionPlaybackPanel();
         btnRefreshCamera.Click += async (_, _) => await RefreshCameraListAsync();
         btnApplyCamera.Click += (_, _) => SaveSettingsOnly();
         btnWatchToggle.Click += (_, _) => ToggleWatching();
@@ -584,6 +586,7 @@ public sealed partial class MainForm : Form
         _playbackPlaying = false;
         ConfigurePlaybackTimeline();
         playbackPanel.Visible = true;
+        PositionPlaybackPanel();
         playbackPanel.BringToFront();
         playbackControl.IsPlaying = false;
         playbackControl.Value = 0;
@@ -960,8 +963,7 @@ public sealed partial class MainForm : Form
 
         using var frame = capturedFrame.Clone();
         _playbackFrameIndex = frameIndex;
-        _latestFrame?.Dispose();
-        _latestFrame = frame.Clone();
+        SetLatestFrame(frame);
         _lastFrameAt = DateTime.Now;
         var result = ShouldRunPlaybackAlgorithm()
             ? AnalyzeFrame(frame, DateTime.Now)
@@ -1071,8 +1073,7 @@ public sealed partial class MainForm : Form
                 _consecutiveFrameFailures = 0;
                 using (frame)
                 {
-                    _latestFrame?.Dispose();
-                    _latestFrame = frame.Clone();
+                    SetLatestFrame(frame);
                     var now = DateTime.Now;
                     _stateMachine.AutoRecordingEnabled = _isWatching && rdoAutoRecording.Checked;
                     var algorithmEnabled = _isWatching && ShouldRunAlgorithm();
@@ -1710,7 +1711,7 @@ public sealed partial class MainForm : Form
                 return false;
             }
 
-            if (_latestFrame is not null && _lastFrameAt != DateTime.MinValue && DateTime.Now - _lastFrameAt < TimeSpan.FromSeconds(3))
+            if (HasRecentLatestFrame())
             {
                 return true;
             }
@@ -2106,7 +2107,8 @@ public sealed partial class MainForm : Form
         rdoFullRecording.Checked = true;
         if (!_recordingService.IsRecording && _cameraService.IsOpened)
         {
-            RotateFullRecordingIfDue(DateTime.Now, _latestFrame);
+            using var latestFrame = TryCloneLatestFrame();
+            RotateFullRecordingIfDue(DateTime.Now, latestFrame);
         }
 
         lblRecordingStatus.Text = $"녹화: {GetFullInterval().TotalMinutes:0}분마다 전체 녹화";
@@ -2186,7 +2188,8 @@ public sealed partial class MainForm : Form
                 return Task.CompletedTask;
             }
 
-            _recordingService.StartRecording(now, "Manual", _latestFrame);
+            using var latestFrame = TryCloneLatestFrame();
+            _recordingService.StartRecording(now, "Manual", latestFrame);
             ShowRecordingStamp("녹화 시작", Color.FromArgb(24, 132, 74));
             _currentRecordingStartedAt = now;
             _currentTriggerReason = "Manual";
@@ -2316,7 +2319,7 @@ public sealed partial class MainForm : Form
         btnCloseCamera.Enabled = !_isPlaybackMode && previewOpen;
         btnSaveHomeReference.Enabled = !_isPlaybackMode
             && previewOpen
-            && _latestFrame is not null
+            && HasRecentLatestFrame()
             && _lastFrameAt != DateTime.MinValue
             && DateTime.Now - _lastFrameAt < TimeSpan.FromSeconds(3);
 
@@ -2340,16 +2343,65 @@ public sealed partial class MainForm : Form
         }
     }
 
+    private void SetLatestFrame(Mat frame)
+    {
+        lock (_latestFrameSync)
+        {
+            var old = _latestFrame;
+            _latestFrame = frame.Clone();
+            old?.Dispose();
+        }
+    }
+
+    private Mat? TryCloneLatestFrame()
+    {
+        lock (_latestFrameSync)
+        {
+            try
+            {
+                return _latestFrame is not null && !_latestFrame.Empty()
+                    ? _latestFrame.Clone()
+                    : null;
+            }
+            catch (ObjectDisposedException)
+            {
+                _latestFrame = null;
+                return null;
+            }
+        }
+    }
+
+    private bool HasRecentLatestFrame()
+    {
+        if (_lastFrameAt == DateTime.MinValue || DateTime.Now - _lastFrameAt >= TimeSpan.FromSeconds(3))
+        {
+            return false;
+        }
+
+        using var frame = TryCloneLatestFrame();
+        return frame is not null;
+    }
+
+    private void ClearLatestFrame()
+    {
+        lock (_latestFrameSync)
+        {
+            _latestFrame?.Dispose();
+            _latestFrame = null;
+        }
+    }
+
     private void SaveHomeReference()
     {
-        if (_latestFrame is null)
+        using var frame = TryCloneLatestFrame();
+        if (frame is null)
         {
             return;
         }
 
         try
         {
-            _detectionService.SaveHomeReference(_latestFrame, _settings.Rois.RodHomeRoi, _paths.HomeReferencePath);
+            _detectionService.SaveHomeReference(frame, _settings.Rois.RodHomeRoi, _paths.HomeReferencePath);
             _logger.Info("Home reference saved.");
         }
         catch (Exception ex)
@@ -2361,7 +2413,8 @@ public sealed partial class MainForm : Form
 
     private void SaveDetectionBaselineReference()
     {
-        if (_latestFrame is null)
+        using var frame = TryCloneLatestFrame();
+        if (frame is null)
         {
             lblDetectionStatus.Text = "감지: 저장할 프레임 없음";
             return;
@@ -2369,7 +2422,7 @@ public sealed partial class MainForm : Form
 
         try
         {
-            _detectionService.SaveBaselineReference(_latestFrame, _paths.BaselineReferencePath);
+            _detectionService.SaveBaselineReference(frame, _paths.BaselineReferencePath);
             _logger.Info($"Detection baseline reference saved: {_paths.BaselineReferencePath}");
             lblDetectionStatus.Text = "감지: 기준 저장됨";
         }
@@ -2502,6 +2555,7 @@ public sealed partial class MainForm : Form
         statusStrip.Visible = _normalStatusStripVisible;
         playbackPanel.Visible = _normalPlaybackPanelVisible;
         ResumeLayout(true);
+        PositionPlaybackPanel();
     }
 
     private void ShowFullScreenHint()
@@ -2582,7 +2636,7 @@ public sealed partial class MainForm : Form
         _recordingService?.Dispose();
         _detectionService.Dispose();
         _cameraService.Dispose();
-        _latestFrame?.Dispose();
+        ClearLatestFrame();
         picCameraPreview.Image?.Dispose();
         if (_trayIcon is not null)
         {
@@ -2595,10 +2649,27 @@ public sealed partial class MainForm : Form
     private void MainForm_Resize(object? sender, EventArgs e)
     {
         PositionFullScreenHint();
+        PositionPlaybackPanel();
         if (WindowState == FormWindowState.Minimized)
         {
             HideToTray();
         }
+    }
+
+    private void PositionPlaybackPanel()
+    {
+        if (playbackPanel.IsDisposed || playbackControl.IsDisposed || sidePanel.IsDisposed)
+        {
+            return;
+        }
+
+        var availableWidth = sidePanel.ClientSize.Width - playbackPanel.Padding.Horizontal;
+        if (availableWidth <= 0)
+        {
+            return;
+        }
+
+        playbackControl.Width = Math.Max(1, Math.Min(428, availableWidth));
     }
 
     private void HideToTray()

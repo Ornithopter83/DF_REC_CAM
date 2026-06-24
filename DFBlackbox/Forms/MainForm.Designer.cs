@@ -6,7 +6,8 @@ partial class MainForm
     private PictureBox picCameraPreview;
     private FlowLayoutPanel playbackPanel;
     private PlaybackControl playbackControl;
-    private FlowLayoutPanel sidePanel;
+    private Panel sidePanel;
+    private FlowLayoutPanel sideContentPanel;
     private StatusStrip statusStrip;
     private RadioButton rdoUsbCamera;
     private RadioButton rdoIpCamera;
@@ -79,7 +80,8 @@ partial class MainForm
         picCameraPreview = new PictureBox();
         playbackPanel = new FlowLayoutPanel();
         playbackControl = new PlaybackControl();
-        sidePanel = new FlowLayoutPanel();
+        sidePanel = new Panel();
+        sideContentPanel = new FlowLayoutPanel();
         statusStrip = new StatusStrip();
         rdoUsbCamera = new RadioButton();
         rdoIpCamera = new RadioButton();
@@ -152,11 +154,11 @@ partial class MainForm
         picCameraPreview.Name = "picCameraPreview";
         picCameraPreview.SizeMode = PictureBoxSizeMode.Zoom;
 
-        playbackPanel.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
         playbackPanel.BackColor = Color.Black;
+        playbackPanel.Dock = DockStyle.Bottom;
         playbackPanel.FlowDirection = FlowDirection.LeftToRight;
         playbackPanel.Height = 150;
-        playbackPanel.Location = new Point(804, 642);
+        playbackPanel.Margin = new Padding(0, 8, 0, 8);
         playbackPanel.Name = "playbackPanel";
         playbackPanel.Padding = new Padding(12);
         playbackPanel.Width = 452;
@@ -167,13 +169,16 @@ partial class MainForm
         playbackControl.Name = "playbackControl";
         playbackControl.Size = new Size(428, 126);
 
-        sidePanel.AutoScroll = true;
         sidePanel.Dock = DockStyle.Right;
-        sidePanel.FlowDirection = FlowDirection.TopDown;
         sidePanel.Name = "sidePanel";
-        sidePanel.Padding = new Padding(8);
         sidePanel.Width = 500;
-        sidePanel.WrapContents = false;
+
+        sideContentPanel.AutoScroll = true;
+        sideContentPanel.Dock = DockStyle.Fill;
+        sideContentPanel.FlowDirection = FlowDirection.TopDown;
+        sideContentPanel.Name = "sideContentPanel";
+        sideContentPanel.Padding = new Padding(8);
+        sideContentPanel.WrapContents = false;
 
         statusStrip.Items.AddRange(new ToolStripItem[]
         {
@@ -195,32 +200,34 @@ partial class MainForm
         ConfigureRecordingControls();
         ConfigureStatusLabels();
 
-        sidePanel.Controls.Add(MakeHeader("카메라"));
-        sidePanel.Controls.Add(MakeRowPanel(btnConnectCamera, btnDisconnectCamera));
-        sidePanel.Controls.Add(MakeRowPanel(btnOpenCamera, btnCloseCamera));
-        sidePanel.Controls.Add(btnLoadVideoFile);
-        sidePanel.Controls.Add(btnSaveHomeReference);
-        sidePanel.Controls.Add(btnWatchToggle);
-        sidePanel.Controls.Add(MakeSectionLabel("녹화 / 저장소"));
-        sidePanel.Controls.Add(MakeRowPanel(rdoManualRecording, rdoAutoRecording, rdoFullRecording));
-        sidePanel.Controls.Add(MakeRowPanel(btnStartRecording, btnStopRecording));
-        sidePanel.Controls.Add(MakeRowPanel(btnOpenStorageFolder, btnSettings));
-        sidePanel.Controls.Add(btnOpenEventList);
-        sidePanel.Controls.Add(MakeBottomSpacer());
-        sidePanel.Controls.Add(MakeRowPanel(btnApplyCamera, btnDefaultSettings));
+        sideContentPanel.Controls.Add(MakeHeader("카메라"));
+        sideContentPanel.Controls.Add(MakeRowPanel(btnConnectCamera, btnDisconnectCamera));
+        sideContentPanel.Controls.Add(MakeRowPanel(btnOpenCamera, btnCloseCamera));
+        sideContentPanel.Controls.Add(btnLoadVideoFile);
+        sideContentPanel.Controls.Add(btnSaveHomeReference);
+        sideContentPanel.Controls.Add(btnWatchToggle);
+        sideContentPanel.Controls.Add(MakeSectionLabel("녹화 / 저장소"));
+        sideContentPanel.Controls.Add(MakeRowPanel(rdoManualRecording, rdoAutoRecording, rdoFullRecording));
+        sideContentPanel.Controls.Add(MakeRowPanel(btnStartRecording, btnStopRecording));
+        sideContentPanel.Controls.Add(MakeRowPanel(btnOpenStorageFolder, btnSettings));
+        sideContentPanel.Controls.Add(btnOpenEventList);
+        sideContentPanel.Controls.Add(MakeBottomSpacer());
+        sideContentPanel.Controls.Add(MakeRowPanel(btnApplyCamera, btnDefaultSettings));
 
         playbackPanel.Controls.Add(playbackControl);
+        sidePanel.Controls.Add(sideContentPanel);
+        sidePanel.Controls.Add(playbackPanel);
 
         Controls.Add(picCameraPreview);
         Controls.Add(sidePanel);
-        Controls.Add(playbackPanel);
         Controls.Add(statusStrip);
 
         AutoScaleDimensions = new SizeF(7F, 15F);
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(1140, 502);
+        ClientSize = new Size(1440, 760);
         KeyPreview = true;
         Location = new Point(10, 10);
+        MinimumSize = new Size(1140, 560);
         Name = "MainForm";
         StartPosition = FormStartPosition.Manual;
         Text = "DFBlackbox";

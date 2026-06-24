@@ -15,7 +15,7 @@ public sealed class RecordingService : IDisposable
     private readonly AppPaths _paths;
     private readonly Queue<BufferedFrame> _preBuffer = new();
     private readonly object _sync = new();
-    private FfmpegRecordingWriter? _writer;
+    private IRecordingWriter? _writer;
     private OpenCvSharp.Size _writerSize;
     private string _activeRecordingPath = "";
     private string _activeFinalPath = "";
@@ -90,7 +90,7 @@ public sealed class RecordingService : IDisposable
             _activeFinalPath = Path.Combine(recordingFolder, $"{prefix}.mp4");
 
             var size = GetRecordingSize(firstFrame);
-            _writer = FfmpegRecordingWriter.Start(_activeRecordingPath, _recordingFps, size, GetRecordingBitrateKbps());
+            _writer = RecordingWriterFactory.Start(_activeRecordingPath, _recordingFps, size, GetRecordingBitrateKbps());
             _writerSize = size;
             foreach (var bufferedFrame in _preBuffer)
             {
@@ -341,7 +341,74 @@ public sealed class RecordingService : IDisposable
         }
     }
 
-    private sealed class FfmpegRecordingWriter : IDisposable
+    private interface IRecordingWriter : IDisposable
+    {
+        void Write(Mat frame);
+        void Close();
+    }
+
+    private static class RecordingWriterFactory
+    {
+        public static IRecordingWriter Start(string outputPath, int fps, OpenCvSharp.Size size, int bitrateKbps)
+        {
+            var ffmpegPath = FfmpegRecordingWriter.ResolveFfmpegPath();
+            return ffmpegPath is not null
+                ? FfmpegRecordingWriter.Start(ffmpegPath, outputPath, fps, bitrateKbps)
+                : OpenCvRecordingWriter.Start(outputPath, fps, size);
+        }
+    }
+
+    private sealed class OpenCvRecordingWriter : IRecordingWriter
+    {
+        private readonly VideoWriter _writer;
+        private bool _closed;
+
+        private OpenCvRecordingWriter(VideoWriter writer)
+        {
+            _writer = writer;
+        }
+
+        public static OpenCvRecordingWriter Start(string outputPath, int fps, OpenCvSharp.Size size)
+        {
+            var writer = new VideoWriter(outputPath, FourCC.MP4V, fps, size);
+            if (!writer.IsOpened())
+            {
+                writer.Dispose();
+                throw new InvalidOperationException("FFmpeg를 찾지 못했고 OpenCV 기본 녹화기도 시작하지 못했습니다.");
+            }
+
+            return new OpenCvRecordingWriter(writer);
+        }
+
+        public void Write(Mat frame)
+        {
+            if (_closed)
+            {
+                return;
+            }
+
+            _writer.Write(frame);
+        }
+
+        public void Close()
+        {
+            if (_closed)
+            {
+                return;
+            }
+
+            _closed = true;
+            _writer.Release();
+        }
+
+        public void Dispose()
+        {
+            Close();
+            _writer.Dispose();
+        }
+    }
+
+    private sealed class FfmpegRecordingWriter : IRecordingWriter
     {
         private const string FfmpegResourceName = "DFBlackbox.ffmpeg.exe";
         private readonly Process _process;
@@ -361,14 +428,8 @@ public sealed class RecordingService : IDisposable
             _process.BeginErrorReadLine();
         }
 
-        public static FfmpegRecordingWriter Start(string outputPath, int fps, OpenCvSharp.Size size, int bitrateKbps)
+        public static FfmpegRecordingWriter Start(string ffmpegPath, string outputPath, int fps, int bitrateKbps)
         {
-            var ffmpegPath = ResolveFfmpegPath();
-            if (ffmpegPath is null)
-            {
-                throw new InvalidOperationException("정확한 녹화 비트 전송률을 사용하려면 ffmpeg.exe가 필요합니다. 앱에 포함된 FFmpeg를 찾지 못했습니다.");
-            }
-
             var process = new Process
             {
                 StartInfo = new ProcessStartInfo
@@ -491,7 +552,7 @@ public sealed class RecordingService : IDisposable
             }
         }
 
-        private static string? ResolveFfmpegPath()
+        public static string? ResolveFfmpegPath()
         {
             var local = Path.Combine(AppContext.BaseDirectory, "ffmpeg.exe");
             if (File.Exists(local))
