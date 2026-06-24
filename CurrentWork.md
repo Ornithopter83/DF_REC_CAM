@@ -119,3 +119,74 @@ Result: success
 Warnings: 0
 Errors: 0
 ```
+
+## 2026-06-24 Update: Simplify IP Camera Utility Buttons
+
+- Removed `Test`, `Web`, and `Copy` buttons from the main operation panel.
+- Removed the unused `Test` and `Copy` button functions from `MainForm`.
+- Moved camera web-page access into `SettingsForm` as a `Website` button.
+  - Location: right side of `Use manual RTSP URL`.
+  - Opens `http://{IP address}:{HTTP port}` for the current IP camera settings.
+  - Enabled only when IP Camera mode is selected.
+
+Verification:
+
+```text
+dotnet build DFBlackbox\DFBlackbox.csproj -o .buildcheck
+Result: success
+Warnings: 0
+Errors: 0
+```
+
+## 2026-06-24 Update: Playback Control Redesign
+
+- Replaced the default WinForms playback `TrackBar` and small playback buttons with a custom painted `PlaybackControl`.
+- New playback UI includes:
+  - Rounded progress bar with click/drag seeking.
+  - Current and total time labels.
+  - Circular previous, play/pause, and next buttons.
+  - Keyboard hint labels: `(-)`, `(/)`, `(+)`.
+- Existing playback behavior is preserved:
+  - Previous/next still step frames.
+  - Play/pause still uses the playback timer.
+  - Seeking still jumps to the requested frame.
+- Playback button shortcut hints now render inside the circular buttons as `[ - ]`, `[ / ]`, and `[ + ]`.
+- Playback FPS detection now estimates FPS from video duration metadata when OpenCV's FPS value is missing or differs significantly, so 60 FPS files can play closer to their original speed.
+- FPS detection was further hardened by reading MP4 `mvhd` duration directly from the container and calculating average FPS as `frame count / duration seconds`.
+  - OpenCV timestamp estimation remains a fallback.
+  - OpenCV metadata FPS remains the final fallback.
+- Playback speed handling was corrected to avoid random seeking on every timer tick.
+  - Normal playback now reads frames sequentially with `Read()`.
+  - Random seek is used only for user seek/step/redraw operations.
+  - Playback analysis is skipped when playback overlays are disabled, reducing per-frame work without dropping frames.
+- Playback no longer uses WinForms `Timer` for frame stepping.
+  - Playback now uses a `Stopwatch`-scheduled async loop based on the calculated frame interval.
+  - Playback preview images are applied immediately on the UI thread instead of being queued through `BeginInvoke`, preventing pending-preview throttling from lowering visible FPS.
+
+Verification:
+
+```text
+dotnet build DFBlackbox\DFBlackbox.csproj -o .buildcheck
+Result: success
+Warnings: 0
+Errors: 0
+```
+
+## 2026-06-24 Update: IP Camera Authentication
+
+- Added IP camera `User` and `Password` fields to `SettingsForm`.
+- Fixed a bug where `MainForm` and `SettingsForm` overwrote RTSP username/password with empty strings.
+- Generated RTSP URLs now include credentials when a username is configured.
+- This is required for cameras that report access-control/authentication errors on RTSP connection.
+- Reverted the authentication UI after camera access control was disabled.
+  - RTSP URLs are generated without username/password.
+  - Any old username/password values are cleared when camera settings are saved from the app.
+
+Verification:
+
+```text
+dotnet build DFBlackbox\DFBlackbox.csproj -o .buildcheck
+Result: success
+Warnings: 0
+Errors: 0
+```

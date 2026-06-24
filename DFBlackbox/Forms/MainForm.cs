@@ -63,10 +63,11 @@ public sealed partial class MainForm : Form
     private bool _playbackPlaying;
     private string _playbackPath = "";
     private VideoCapture? _playbackCapture;
-    private System.Windows.Forms.Timer? _playbackTimer;
+    private CancellationTokenSource? _playbackPlayCts;
     private int _playbackFrameIndex;
     private int _playbackFrameCount;
     private double _playbackFps = 30;
+    private double _playbackDurationSeconds;
     private bool _updatingPlaybackTimeline;
     private bool _cameraListRefreshInProgress;
     private bool _applyingSettingsToUi;
@@ -172,19 +173,16 @@ public sealed partial class MainForm : Form
         btnCloseCamera.Click += async (_, _) => await CloseCameraPreviewAsync();
         btnLoadVideoFile.Click += async (_, _) => await LoadVideoFileAsync();
         btnCameraProperty.Click += (_, _) => OpenCameraPropertyDialog();
-        btnTestIpCamera.Click += async (_, _) => await TestIpCameraAsync();
-        btnOpenCameraWeb.Click += (_, _) => OpenCameraWeb();
-        btnCopyRtspUrl.Click += (_, _) => CopyRtspUrl();
         btnOpenStorageFolder.Click += (_, _) => Process.Start(new ProcessStartInfo { FileName = _paths.RecVideos, UseShellExecute = true });
         btnSettings.Click += (_, _) => OpenSettingsDialog();
         btnStartRecording.Click += async (_, _) => await StartSelectedRecordingAsync();
         btnStopRecording.Click += (_, _) => StopSelectedRecording();
         btnSaveHomeReference.Click += (_, _) => SaveDetectionBaselineReference();
         btnOpenEventList.Click += (_, _) => new EventListForm(_eventLogService).Show(this);
-        btnPlaybackPrevFrame.Click += (_, _) => StepPlaybackFrame(-1);
-        btnPlaybackPlayPause.Click += (_, _) => TogglePlayback();
-        btnPlaybackNextFrame.Click += (_, _) => StepPlaybackFrame(1);
-        trkPlaybackTimeline.Scroll += (_, _) => SeekPlaybackFromTimeline();
+        playbackControl.PreviousClicked += (_, _) => StepPlaybackFrame(-1);
+        playbackControl.PlayPauseClicked += (_, _) => TogglePlayback();
+        playbackControl.NextClicked += (_, _) => StepPlaybackFrame(1);
+        playbackControl.SeekRequested += (_, frameIndex) => SeekPlaybackFrame(frameIndex);
         numPersonThreshold.ValueChanged += (_, _) => ReadDetectionSettingsFromUi();
         picCameraPreview.MouseDown += PicCameraPreview_MouseDown;
         picCameraPreview.MouseMove += PicCameraPreview_MouseMove;
@@ -565,24 +563,16 @@ public sealed partial class MainForm : Form
         _playbackPath = filePath;
         _playbackFrameIndex = 0;
         _playbackFrameCount = Math.Max(0, (int)Math.Round(capture.Get(VideoCaptureProperties.FrameCount)));
-        _playbackFps = capture.Get(VideoCaptureProperties.Fps);
-        if (_playbackFps <= 0 || double.IsNaN(_playbackFps))
-        {
-            _playbackFps = Math.Max(1, _settings.Camera.ActiveFps);
-        }
+        _playbackDurationSeconds = TryReadMp4DurationSeconds(filePath);
+        _playbackFps = DetectPlaybackFps(capture, filePath, _playbackFrameCount);
 
-        _playbackTimer = new System.Windows.Forms.Timer
-        {
-            Interval = Math.Clamp((int)Math.Round(1000.0 / _playbackFps), 10, 200)
-        };
-        _playbackTimer.Tick += (_, _) => PlayNextPlaybackFrame();
         _isPlaybackMode = true;
         _playbackPlaying = false;
         ConfigurePlaybackTimeline();
         playbackPanel.Visible = true;
         playbackPanel.BringToFront();
-        btnPlaybackPlayPause.Text = ">";
-        trkPlaybackTimeline.Value = 0;
+        playbackControl.IsPlaying = false;
+        playbackControl.Value = 0;
         lblCameraStatus.Text = "Playback: loaded";
         lblRtspStatus.Text = $"File: {Path.GetFileName(filePath)}";
         ShowPlaybackFrame(0);
@@ -591,9 +581,7 @@ public sealed partial class MainForm : Form
 
     private void ExitPlaybackMode(bool clearPreview)
     {
-        _playbackTimer?.Stop();
-        _playbackTimer?.Dispose();
-        _playbackTimer = null;
+        StopPlaybackLoop();
         _playbackCapture?.Dispose();
         _playbackCapture = null;
         _isPlaybackMode = false;
@@ -601,8 +589,9 @@ public sealed partial class MainForm : Form
         _playbackPath = "";
         _playbackFrameIndex = 0;
         _playbackFrameCount = 0;
+        _playbackDurationSeconds = 0;
         playbackPanel.Visible = false;
-        btnPlaybackPlayPause.Text = ">";
+        playbackControl.IsPlaying = false;
         if (clearPreview)
         {
             var old = picCameraPreview.Image;
@@ -613,22 +602,284 @@ public sealed partial class MainForm : Form
         UpdateControlStates();
     }
 
+    private double DetectPlaybackFps(VideoCapture capture, string filePath, int frameCount)
+    {
+        var metadataFps = capture.Get(VideoCaptureProperties.Fps);
+        var mp4DurationSeconds = _playbackDurationSeconds > 0 ? _playbackDurationSeconds : TryReadMp4DurationSeconds(filePath);
+        var durationFps = frameCount > 1 && mp4DurationSeconds > 0
+            ? frameCount / mp4DurationSeconds
+            : TryEstimatePlaybackFpsFromOpenCvTimestamp(capture, frameCount);
+        if (IsValidPlaybackFps(durationFps))
+        {
+            if (!IsValidPlaybackFps(metadataFps)
+                || Math.Abs(durationFps - metadataFps) / Math.Max(durationFps, metadataFps) > 0.10)
+            {
+                _logger?.Info($"Playback FPS adjusted from metadata {metadataFps:0.###} to duration estimate {durationFps:0.###}.");
+                return durationFps;
+            }
+        }
+
+        if (IsValidPlaybackFps(metadataFps))
+        {
+            return metadataFps;
+        }
+
+        return Math.Max(1, _settings.Camera.ActiveFps);
+    }
+
+    private static double TryEstimatePlaybackFpsFromOpenCvTimestamp(VideoCapture capture, int frameCount)
+    {
+        if (frameCount <= 1)
+        {
+            return 0;
+        }
+
+        var originalFrame = capture.Get(VideoCaptureProperties.PosFrames);
+        try
+        {
+            capture.Set(VideoCaptureProperties.PosFrames, frameCount - 1);
+            using var frame = new Mat();
+            if (!capture.Read(frame) || frame.Empty())
+            {
+                return 0;
+            }
+
+            var lastFrameMs = capture.Get(VideoCaptureProperties.PosMsec);
+            if (lastFrameMs <= 0 || double.IsNaN(lastFrameMs) || double.IsInfinity(lastFrameMs))
+            {
+                return 0;
+            }
+
+            return (frameCount - 1) / (lastFrameMs / 1000.0);
+        }
+        finally
+        {
+            capture.Set(VideoCaptureProperties.PosFrames, Math.Max(0, originalFrame));
+        }
+    }
+
+    private static double TryReadMp4DurationSeconds(string filePath)
+    {
+        try
+        {
+            using var stream = File.OpenRead(filePath);
+            return ReadMp4DurationFromContainer(stream, stream.Length);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static double ReadMp4DurationFromContainer(Stream stream, long endOffset)
+    {
+        while (stream.Position + 8 <= endOffset)
+        {
+            var atomStart = stream.Position;
+            var atomSize = ReadUInt32BigEndian(stream);
+            var atomType = ReadAscii(stream, 4);
+            long headerSize = 8;
+            if (atomSize == 1)
+            {
+                if (stream.Position + 8 > endOffset)
+                {
+                    return 0;
+                }
+
+                atomSize = 0;
+                var extendedSize = ReadUInt64BigEndian(stream);
+                headerSize = 16;
+                if (extendedSize > long.MaxValue)
+                {
+                    return 0;
+                }
+
+                atomSize = (uint)Math.Min(uint.MaxValue, extendedSize);
+                var atomEnd = atomStart + (long)extendedSize;
+                var duration = ReadMp4AtomPayload(stream, atomType, atomEnd);
+                if (duration > 0)
+                {
+                    return duration;
+                }
+
+                stream.Position = Math.Min(atomEnd, endOffset);
+                continue;
+            }
+
+            if (atomSize != 0 && atomSize < headerSize)
+            {
+                return 0;
+            }
+
+            var currentAtomEnd = atomSize == 0 ? endOffset : Math.Min(atomStart + atomSize, endOffset);
+            var found = ReadMp4AtomPayload(stream, atomType, currentAtomEnd);
+            if (found > 0)
+            {
+                return found;
+            }
+
+            stream.Position = currentAtomEnd;
+        }
+
+        return 0;
+    }
+
+    private static double ReadMp4AtomPayload(Stream stream, string atomType, long atomEnd)
+    {
+        if (atomType == "mvhd")
+        {
+            return ReadMovieHeaderDuration(stream, atomEnd);
+        }
+
+        if (atomType is "moov" or "trak" or "mdia")
+        {
+            return ReadMp4DurationFromContainer(stream, atomEnd);
+        }
+
+        return 0;
+    }
+
+    private static double ReadMovieHeaderDuration(Stream stream, long atomEnd)
+    {
+        if (stream.Position + 4 > atomEnd)
+        {
+            return 0;
+        }
+
+        var version = stream.ReadByte();
+        stream.Position += 3;
+        if (version == 1)
+        {
+            if (stream.Position + 28 > atomEnd)
+            {
+                return 0;
+            }
+
+            stream.Position += 16;
+            var timescale = ReadUInt32BigEndian(stream);
+            var duration = ReadUInt64BigEndian(stream);
+            return timescale > 0 ? duration / (double)timescale : 0;
+        }
+
+        if (stream.Position + 16 > atomEnd)
+        {
+            return 0;
+        }
+
+        stream.Position += 8;
+        var scale = ReadUInt32BigEndian(stream);
+        var duration32 = ReadUInt32BigEndian(stream);
+        return scale > 0 ? duration32 / (double)scale : 0;
+    }
+
+    private static uint ReadUInt32BigEndian(Stream stream)
+    {
+        Span<byte> buffer = stackalloc byte[4];
+        if (stream.Read(buffer) != buffer.Length)
+        {
+            return 0;
+        }
+
+        return ((uint)buffer[0] << 24)
+            | ((uint)buffer[1] << 16)
+            | ((uint)buffer[2] << 8)
+            | buffer[3];
+    }
+
+    private static ulong ReadUInt64BigEndian(Stream stream)
+    {
+        Span<byte> buffer = stackalloc byte[8];
+        if (stream.Read(buffer) != buffer.Length)
+        {
+            return 0;
+        }
+
+        return ((ulong)buffer[0] << 56)
+            | ((ulong)buffer[1] << 48)
+            | ((ulong)buffer[2] << 40)
+            | ((ulong)buffer[3] << 32)
+            | ((ulong)buffer[4] << 24)
+            | ((ulong)buffer[5] << 16)
+            | ((ulong)buffer[6] << 8)
+            | buffer[7];
+    }
+
+    private static string ReadAscii(Stream stream, int length)
+    {
+        Span<byte> buffer = stackalloc byte[length];
+        return stream.Read(buffer) == length
+            ? System.Text.Encoding.ASCII.GetString(buffer)
+            : "";
+    }
+
+    private static bool IsValidPlaybackFps(double fps)
+    {
+        return fps > 0 && fps < 300 && !double.IsNaN(fps) && !double.IsInfinity(fps);
+    }
+
     private void TogglePlayback()
     {
-        if (!_isPlaybackMode || _playbackTimer is null)
+        if (!_isPlaybackMode || _playbackCapture is null)
         {
             return;
         }
 
         _playbackPlaying = !_playbackPlaying;
-        btnPlaybackPlayPause.Text = _playbackPlaying ? "||" : ">";
+        playbackControl.IsPlaying = _playbackPlaying;
         if (_playbackPlaying)
         {
-            _playbackTimer.Start();
+            StartPlaybackLoop();
         }
         else
         {
-            _playbackTimer.Stop();
+            StopPlaybackLoop();
+        }
+    }
+
+    private void StartPlaybackLoop()
+    {
+        StopPlaybackLoop();
+        _playbackPlayCts = new CancellationTokenSource();
+        _ = RunPlaybackLoopAsync(_playbackPlayCts.Token);
+    }
+
+    private void StopPlaybackLoop()
+    {
+        _playbackPlayCts?.Cancel();
+        _playbackPlayCts?.Dispose();
+        _playbackPlayCts = null;
+    }
+
+    private async Task RunPlaybackLoopAsync(CancellationToken token)
+    {
+        try
+        {
+            var intervalMs = Math.Clamp(1000.0 / Math.Max(1, _playbackFps), 1, 200);
+            var stopwatch = Stopwatch.StartNew();
+            var nextFrameAtMs = 0.0;
+
+            while (!token.IsCancellationRequested && _isPlaybackMode && _playbackPlaying)
+            {
+                PlayNextPlaybackFrame();
+                if (!_playbackPlaying)
+                {
+                    break;
+                }
+
+                nextFrameAtMs += intervalMs;
+                var delayMs = nextFrameAtMs - stopwatch.Elapsed.TotalMilliseconds;
+                if (delayMs > 1)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(delayMs), token);
+                }
+                else
+                {
+                    await Task.Yield();
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
         }
     }
 
@@ -640,8 +891,8 @@ public sealed partial class MainForm : Form
         }
 
         _playbackPlaying = false;
-        _playbackTimer?.Stop();
-        btnPlaybackPlayPause.Text = ">";
+        StopPlaybackLoop();
+        playbackControl.IsPlaying = false;
         ShowPlaybackFrame(_playbackFrameIndex + delta);
     }
 
@@ -655,15 +906,15 @@ public sealed partial class MainForm : Form
         if (_playbackFrameCount > 0 && _playbackFrameIndex >= _playbackFrameCount - 1)
         {
             _playbackPlaying = false;
-            _playbackTimer?.Stop();
-            btnPlaybackPlayPause.Text = ">";
+            StopPlaybackLoop();
+            playbackControl.IsPlaying = false;
             return;
         }
 
-        ShowPlaybackFrame(_playbackFrameIndex + 1);
+        ShowPlaybackFrame(_playbackFrameIndex + 1, seek: false);
     }
 
-    private void ShowPlaybackFrame(int frameIndex)
+    private void ShowPlaybackFrame(int frameIndex, bool seek = true)
     {
         if (_playbackCapture is null)
         {
@@ -679,13 +930,17 @@ public sealed partial class MainForm : Form
             frameIndex = Math.Max(0, frameIndex);
         }
 
-        _playbackCapture.Set(VideoCaptureProperties.PosFrames, frameIndex);
+        if (seek)
+        {
+            _playbackCapture.Set(VideoCaptureProperties.PosFrames, frameIndex);
+        }
+
         using var capturedFrame = new Mat();
         if (!_playbackCapture.Read(capturedFrame) || capturedFrame.Empty())
         {
             _playbackPlaying = false;
-            _playbackTimer?.Stop();
-            btnPlaybackPlayPause.Text = ">";
+            StopPlaybackLoop();
+            playbackControl.IsPlaying = false;
             return;
         }
 
@@ -715,7 +970,7 @@ public sealed partial class MainForm : Form
 
     private bool ShouldRunPlaybackAlgorithm()
     {
-        return true;
+        return ShouldDrawPlaybackOverlay();
     }
 
     private bool ShouldDrawPlaybackOverlay()
@@ -730,17 +985,20 @@ public sealed partial class MainForm : Form
     {
         var total = _playbackFrameCount > 0 ? _playbackFrameCount.ToString() : "?";
         var time = _playbackFps > 0 ? _playbackFrameIndex / _playbackFps : 0;
-        lblPlaybackInfo.Text = $"Playback: {Path.GetFileName(_playbackPath)}  Frame {_playbackFrameIndex + 1}/{total}  {time:0.00}s";
+        var totalSeconds = _playbackDurationSeconds > 0
+            ? _playbackDurationSeconds
+            : _playbackFps > 0 && _playbackFrameCount > 0
+                ? _playbackFrameCount / _playbackFps
+                : 0;
+        playbackControl.SetPosition(_playbackFrameIndex, FormatPlaybackTime(time), FormatPlaybackTime(totalSeconds));
+        lblRtspStatus.Text = $"File: {Path.GetFileName(_playbackPath)}  Frame {_playbackFrameIndex + 1}/{total}";
     }
 
     private void ConfigurePlaybackTimeline()
     {
         _updatingPlaybackTimeline = true;
-        trkPlaybackTimeline.Minimum = 0;
-        trkPlaybackTimeline.Maximum = Math.Max(0, _playbackFrameCount - 1);
-        trkPlaybackTimeline.LargeChange = Math.Max(1, _playbackFrameCount / 100);
-        trkPlaybackTimeline.SmallChange = 1;
-        trkPlaybackTimeline.Value = 0;
+        playbackControl.SetRange(0, Math.Max(0, _playbackFrameCount - 1));
+        playbackControl.Value = 0;
         _updatingPlaybackTimeline = false;
     }
 
@@ -752,11 +1010,11 @@ public sealed partial class MainForm : Form
         }
 
         _updatingPlaybackTimeline = true;
-        trkPlaybackTimeline.Value = Math.Clamp(_playbackFrameIndex, trkPlaybackTimeline.Minimum, trkPlaybackTimeline.Maximum);
+        playbackControl.Value = Math.Clamp(_playbackFrameIndex, playbackControl.Minimum, playbackControl.Maximum);
         _updatingPlaybackTimeline = false;
     }
 
-    private void SeekPlaybackFromTimeline()
+    private void SeekPlaybackFrame(int frameIndex)
     {
         if (_updatingPlaybackTimeline || !_isPlaybackMode)
         {
@@ -764,9 +1022,22 @@ public sealed partial class MainForm : Form
         }
 
         _playbackPlaying = false;
-        _playbackTimer?.Stop();
-        btnPlaybackPlayPause.Text = ">";
-        ShowPlaybackFrame(trkPlaybackTimeline.Value);
+        StopPlaybackLoop();
+        playbackControl.IsPlaying = false;
+        ShowPlaybackFrame(frameIndex);
+    }
+
+    private static string FormatPlaybackTime(double seconds)
+    {
+        if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 0)
+        {
+            seconds = 0;
+        }
+
+        var time = TimeSpan.FromSeconds(seconds);
+        return time.TotalHours >= 1
+            ? $"{(int)time.TotalHours:0}:{time.Minutes:00}:{time.Seconds:00}"
+            : $"{time.Minutes:00}:{time.Seconds:00}";
     }
 
     private async Task CaptureLoopAsync(CancellationToken token)
@@ -1058,6 +1329,13 @@ public sealed partial class MainForm : Form
             return;
         }
 
+        if (_isPlaybackMode && !InvokeRequired)
+        {
+            ApplyPreviewBitmap(bitmap, result);
+            Interlocked.Exchange(ref _previewUpdatePending, 0);
+            return;
+        }
+
         BeginInvoke(() =>
         {
             if (IsDisposed)
@@ -1067,36 +1345,42 @@ public sealed partial class MainForm : Form
                 return;
             }
 
-            var old = picCameraPreview.Image;
-            picCameraPreview.Image = bitmap;
-            old?.Dispose();
-            lblFps.Text = $"FPS: {_fpsCounter.CurrentFps:0.0}";
-            if (_isPlaybackMode)
-            {
-                lblCameraStatus.Text = _playbackPlaying ? "Playback: playing" : "Playback: paused";
-                lblRtspStatus.Text = $"File: {Path.GetFileName(_playbackPath)}";
-                lblLastFrame.Text = _playbackFrameCount > 0 ? $"Frame: {_playbackFrameIndex + 1}/{_playbackFrameCount}" : $"Frame: {_playbackFrameIndex + 1}";
-            }
-            else
-            {
-                lblCameraStatus.Text = GetCameraStatusText();
-                lblRtspStatus.Text = _settings.Camera.IsIpCamera ? $"RTSP: {_cameraService.ConnectionState}" : "RTSP: n/a";
-                lblLastFrame.Text = _lastFrameAt == DateTime.MinValue ? "Last Frame: n/a" : $"Last Frame: {(DateTime.Now - _lastFrameAt).TotalSeconds:0.0}s ago";
-            }
-            lblDetectionStatus.Text = $"Detection: P={result.PersonDetected} I={result.RodMotionScore:0.000} H={result.HomeStable}";
-            lblAlgorithmStatus.Text = _lastAlgorithmEnabled ? $"Algo: {_lastAlgorithmMs:0.0}ms / {_algorithmFpsCounter.CurrentFps:0.0}fps" : "Algo: off";
-            lblRecordingStatus.Text = _isPlaybackMode ? "Recording: playback mode" : _recordingService.IsRecording ? "Recording: on" : $"Recording: {_stateMachine.CurrentState}";
-            UpdateControlStates();
-            if (DateTime.Now - _lastDiskStatusAt > TimeSpan.FromSeconds(5))
-            {
-                _cachedDiskStatus = $"Disk: {DiskUtils.GetUsedPercent(_paths.RecVideos):0.0}% used / Free: {DiskUtils.FormatBytes(DiskUtils.GetFreeDiskBytes(_paths.RecVideos))}";
-                _lastDiskStatusAt = DateTime.Now;
-            }
-
-            lblDiskStatus.Text = _cachedDiskStatus;
-            lblErrorStatus.Text = "Error: none";
+            ApplyPreviewBitmap(bitmap, result);
             Interlocked.Exchange(ref _previewUpdatePending, 0);
         });
+    }
+
+    private void ApplyPreviewBitmap(Bitmap bitmap, DetectionResult result)
+    {
+        var old = picCameraPreview.Image;
+        picCameraPreview.Image = bitmap;
+        old?.Dispose();
+        lblFps.Text = $"FPS: {_fpsCounter.CurrentFps:0.0}";
+        if (_isPlaybackMode)
+        {
+            lblCameraStatus.Text = _playbackPlaying ? "Playback: playing" : "Playback: paused";
+            lblRtspStatus.Text = $"File: {Path.GetFileName(_playbackPath)}";
+            lblLastFrame.Text = _playbackFrameCount > 0 ? $"Frame: {_playbackFrameIndex + 1}/{_playbackFrameCount}" : $"Frame: {_playbackFrameIndex + 1}";
+        }
+        else
+        {
+            lblCameraStatus.Text = GetCameraStatusText();
+            lblRtspStatus.Text = _settings.Camera.IsIpCamera ? $"RTSP: {_cameraService.ConnectionState}" : "RTSP: n/a";
+            lblLastFrame.Text = _lastFrameAt == DateTime.MinValue ? "Last Frame: n/a" : $"Last Frame: {(DateTime.Now - _lastFrameAt).TotalSeconds:0.0}s ago";
+        }
+
+        lblDetectionStatus.Text = $"Detection: P={result.PersonDetected} I={result.RodMotionScore:0.000} H={result.HomeStable}";
+        lblAlgorithmStatus.Text = _lastAlgorithmEnabled ? $"Algo: {_lastAlgorithmMs:0.0}ms / {_algorithmFpsCounter.CurrentFps:0.0}fps" : "Algo: off";
+        lblRecordingStatus.Text = _isPlaybackMode ? "Recording: playback mode" : _recordingService.IsRecording ? "Recording: on" : $"Recording: {_stateMachine.CurrentState}";
+        UpdateControlStates();
+        if (DateTime.Now - _lastDiskStatusAt > TimeSpan.FromSeconds(5))
+        {
+            _cachedDiskStatus = $"Disk: {DiskUtils.GetUsedPercent(_paths.RecVideos):0.0}% used / Free: {DiskUtils.FormatBytes(DiskUtils.GetFreeDiskBytes(_paths.RecVideos))}";
+            _lastDiskStatusAt = DateTime.Now;
+        }
+
+        lblDiskStatus.Text = _cachedDiskStatus;
+        lblErrorStatus.Text = "Error: none";
     }
 
     private void SaveEventLog(string filePath, DateTime endTime)
@@ -1284,63 +1568,6 @@ public sealed partial class MainForm : Form
         txtGeneratedRtspUrl.Text = RtspUrlBuilder.Build(cam);
     }
 
-    private async Task TestIpCameraAsync()
-    {
-        ReadCameraSettingsFromUi();
-        btnTestIpCamera.Enabled = false;
-        lblRtspStatus.Text = "RTSP: Testing";
-        try
-        {
-            var success = await Task.Run(() =>
-            {
-                using var capture = new VideoCapture(RtspUrlBuilder.Build(_settings.Camera.IpCamera));
-                if (!capture.IsOpened())
-                {
-                    return false;
-                }
-
-                var until = DateTime.Now.AddSeconds(5);
-                while (DateTime.Now < until)
-                {
-                    using var frame = new Mat();
-                    if (capture.Read(frame) && !frame.Empty())
-                    {
-                        return true;
-                    }
-                    Thread.Sleep(100);
-                }
-
-                return false;
-            });
-
-            lblRtspStatus.Text = success ? "RTSP: Connected" : "RTSP: Disconnected";
-            MessageBox.Show(
-                this,
-                success ? "Connection succeeded: frame received." : "Connection failed. Check RTSP URL, camera IP, stream path, firewall, and power.",
-                "IP Camera Test",
-                MessageBoxButtons.OK,
-                success ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-        }
-        finally
-        {
-            btnTestIpCamera.Enabled = true;
-        }
-    }
-
-    private void OpenCameraWeb()
-    {
-        ReadCameraSettingsFromUi();
-        var url = $"http://{_settings.Camera.IpCamera.IpAddress}:{_settings.Camera.IpCamera.HttpPort}";
-        Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
-    }
-
-    private void CopyRtspUrl()
-    {
-        ReadCameraSettingsFromUi();
-        Clipboard.SetText(RtspUrlBuilder.Build(_settings.Camera.IpCamera));
-        lblRtspStatus.Text = "RTSP: URL copied";
-    }
-
     private void OpenSettingsDialog()
     {
         using var form = new SettingsForm(_settings, ApplySettingsFromDialog, rdoFullRecording.Checked);
@@ -1468,7 +1695,7 @@ public sealed partial class MainForm : Form
             control.Enabled = usb;
         }
 
-        foreach (var control in new Control[] { txtIpAddress, numRtspPort, numHttpPort, cmbStreamPath, chkUseManualRtspUrl, txtGeneratedRtspUrl, btnTestIpCamera, btnOpenCameraWeb, btnCopyRtspUrl })
+        foreach (var control in new Control[] { txtIpAddress, numRtspPort, numHttpPort, cmbStreamPath, chkUseManualRtspUrl, txtGeneratedRtspUrl })
         {
             control.Enabled = !usb;
         }
@@ -1999,9 +2226,11 @@ public sealed partial class MainForm : Form
             btnDisconnectCamera.Enabled = false;
             btnOpenCamera.Enabled = false;
             btnCloseCamera.Enabled = false;
+            btnSaveHomeReference.Enabled = false;
             btnWatchToggle.Enabled = false;
             btnStartRecording.Enabled = false;
             btnStopRecording.Enabled = false;
+            playbackControl.Enabled = false;
             return;
         }
 
@@ -2012,28 +2241,30 @@ public sealed partial class MainForm : Form
 
         btnRefreshCamera.Enabled = usb && !_cameraListRefreshInProgress;
         btnCameraProperty.Enabled = usb && cmbCameraList.SelectedItem is int;
-        btnConnectCamera.Enabled = !_isPlaybackMode && cameraActionAvailable && !_cameraService.IsOpened;
+        btnConnectCamera.Enabled = cameraActionAvailable && !_cameraService.IsOpened;
         btnDisconnectCamera.Enabled = !_isPlaybackMode && (_cameraService.IsOpened || previewOpen);
-        btnOpenCamera.Enabled = !_isPlaybackMode && cameraActionAvailable && !previewOpen;
+        btnOpenCamera.Enabled = cameraActionAvailable && !previewOpen;
         btnCloseCamera.Enabled = !_isPlaybackMode && previewOpen;
+        btnSaveHomeReference.Enabled = !_isPlaybackMode
+            && previewOpen
+            && _latestFrame is not null
+            && _lastFrameAt != DateTime.MinValue
+            && DateTime.Now - _lastFrameAt < TimeSpan.FromSeconds(3);
 
         if (_isPlaybackMode)
         {
+            btnSaveHomeReference.Enabled = false;
             btnWatchToggle.Enabled = false;
             btnStartRecording.Enabled = false;
             btnStopRecording.Enabled = false;
-            btnPlaybackPrevFrame.Enabled = true;
-            btnPlaybackPlayPause.Enabled = true;
-            btnPlaybackNextFrame.Enabled = true;
+            playbackControl.Enabled = true;
             return;
         }
 
         btnWatchToggle.Enabled = previewOpen && !rdoFullRecording.Checked;
         btnStartRecording.Enabled = previewOpen && !recording;
         btnStopRecording.Enabled = recording;
-        btnPlaybackPrevFrame.Enabled = false;
-        btnPlaybackPlayPause.Enabled = false;
-        btnPlaybackNextFrame.Enabled = false;
+        playbackControl.Enabled = false;
         if (!previewOpen && _isWatching)
         {
             SetWatching(false);

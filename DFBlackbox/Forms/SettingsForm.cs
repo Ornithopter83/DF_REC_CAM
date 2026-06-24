@@ -1,6 +1,7 @@
 using DFBlackbox.Core;
 using DFBlackbox.Models;
 using DFBlackbox.Utils;
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace DFBlackbox.Forms;
@@ -21,6 +22,7 @@ public sealed class SettingsForm : Form
     private readonly NumericUpDown _numHttpPort = new() { Minimum = 1, Maximum = 65535, Value = 80 };
     private readonly ComboBox _cmbStreamPath = new() { DropDownStyle = ComboBoxStyle.DropDown };
     private readonly CheckBox _chkUseManualRtspUrl = new() { Text = "Use manual RTSP URL", AutoSize = true };
+    private readonly Button _btnOpenWebsite = new() { Text = "Website", Width = 100, Height = 28 };
     private readonly TextBox _txtManualRtspUrl = new();
     private readonly TextBox _txtGeneratedRtspUrl = new() { ReadOnly = true };
     private readonly Button _btnRefreshCamera = new() { Text = "Refresh" };
@@ -95,7 +97,8 @@ public sealed class SettingsForm : Form
         panel.Controls.Add(Header("IP Camera"));
         panel.Controls.Add(Row(Labeled("IP", _txtIpAddress, 240), Labeled("RTSP", _numRtspPort, 120), Labeled("HTTP", _numHttpPort, 120)));
         panel.Controls.Add(Row(Labeled("Path", _cmbStreamPath, 492)));
-        panel.Controls.Add(_chkUseManualRtspUrl);
+        _btnOpenWebsite.Click += (_, _) => OpenCameraWebsite();
+        panel.Controls.Add(Row(_chkUseManualRtspUrl, _btnOpenWebsite));
         panel.Controls.Add(Row(Labeled("Manual RTSP", _txtManualRtspUrl, 492)));
         panel.Controls.Add(Row(Labeled("RTSP URL", _txtGeneratedRtspUrl, 492)));
         panel.Controls.Add(Header("Detection"));
@@ -292,12 +295,25 @@ public sealed class SettingsForm : Form
         var usb = _rdoUsbCamera.Checked;
         _cmbCameraList.Enabled = usb;
         _btnRefreshCamera.Enabled = usb && !_cameraListRefreshInProgress;
-        foreach (var control in new Control[] { _txtIpAddress, _numRtspPort, _numHttpPort, _cmbStreamPath, _chkUseManualRtspUrl, _txtGeneratedRtspUrl })
+        foreach (var control in new Control[] { _txtIpAddress, _numRtspPort, _numHttpPort, _cmbStreamPath, _chkUseManualRtspUrl, _txtGeneratedRtspUrl, _btnOpenWebsite })
         {
             control.Enabled = !usb;
         }
 
         _txtManualRtspUrl.Enabled = !usb && _chkUseManualRtspUrl.Checked;
+    }
+
+    private void OpenCameraWebsite()
+    {
+        var ipAddress = _txtIpAddress.Text.Trim();
+        if (string.IsNullOrWhiteSpace(ipAddress))
+        {
+            MessageBox.Show(this, "Enter the IP camera address first.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var url = $"http://{ipAddress}:{(int)_numHttpPort.Value}";
+        Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
     }
 
     private Control Buttons()

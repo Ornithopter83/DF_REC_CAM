@@ -52,10 +52,9 @@ Workflow:
 1. Start DFBlackbox.
 2. Select IP Camera or USB Camera.
 3. Enter IP camera address, RTSP port, HTTP port, and stream path.
-4. Use Test to verify frame reception.
-5. Use Connect to open the camera connection.
-6. Use Open Camera to start preview and detection.
-7. Use Manual mode for manual-only recording, Auto mode for event-triggered recording, or Full mode for continuous segmented recording.
+4. Use Connect to open the camera connection.
+5. Use Open Camera to start preview and detection.
+6. Use Manual mode for manual-only recording, Auto mode for event-triggered recording, or Full mode for continuous segmented recording.
 
 Camera Startup Behavior
 -----------------------

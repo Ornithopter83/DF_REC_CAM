@@ -5,6 +5,7 @@ partial class MainForm
     private System.ComponentModel.IContainer components = null;
     private PictureBox picCameraPreview;
     private FlowLayoutPanel playbackPanel;
+    private PlaybackControl playbackControl;
     private FlowLayoutPanel sidePanel;
     private StatusStrip statusStrip;
     private RadioButton rdoUsbCamera;
@@ -29,9 +30,6 @@ partial class MainForm
     private Button btnCloseCamera;
     private Button btnLoadVideoFile;
     private Button btnCameraProperty;
-    private Button btnTestIpCamera;
-    private Button btnOpenCameraWeb;
-    private Button btnCopyRtspUrl;
     private Button btnOpenStorageFolder;
     private Button btnSettings;
     private RadioButton rdoManualRecording;
@@ -41,11 +39,6 @@ partial class MainForm
     private Button btnStopRecording;
     private Button btnSaveHomeReference;
     private Button btnOpenEventList;
-    private Button btnPlaybackPrevFrame;
-    private Button btnPlaybackPlayPause;
-    private Button btnPlaybackNextFrame;
-    private TrackBar trkPlaybackTimeline;
-    private Label lblPlaybackInfo;
     private CheckBox chkShowPersonBox;
     private CheckBox chkShowMotionMask;
     private CheckBox chkShowRodRoi;
@@ -85,6 +78,7 @@ partial class MainForm
         components = new System.ComponentModel.Container();
         picCameraPreview = new PictureBox();
         playbackPanel = new FlowLayoutPanel();
+        playbackControl = new PlaybackControl();
         sidePanel = new FlowLayoutPanel();
         statusStrip = new StatusStrip();
         rdoUsbCamera = new RadioButton();
@@ -109,9 +103,6 @@ partial class MainForm
         btnCloseCamera = new Button();
         btnLoadVideoFile = new Button();
         btnCameraProperty = new Button();
-        btnTestIpCamera = new Button();
-        btnOpenCameraWeb = new Button();
-        btnCopyRtspUrl = new Button();
         btnOpenStorageFolder = new Button();
         btnSettings = new Button();
         rdoManualRecording = new RadioButton();
@@ -121,11 +112,6 @@ partial class MainForm
         btnStopRecording = new Button();
         btnSaveHomeReference = new Button();
         btnOpenEventList = new Button();
-        btnPlaybackPrevFrame = new Button();
-        btnPlaybackPlayPause = new Button();
-        btnPlaybackNextFrame = new Button();
-        trkPlaybackTimeline = new TrackBar();
-        lblPlaybackInfo = new Label();
         chkShowPersonBox = new CheckBox();
         chkShowMotionMask = new CheckBox();
         chkShowRodRoi = new CheckBox();
@@ -167,15 +153,19 @@ partial class MainForm
         picCameraPreview.SizeMode = PictureBoxSizeMode.Zoom;
 
         playbackPanel.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
-        playbackPanel.BackColor = Color.FromArgb(245, 20, 20, 20);
+        playbackPanel.BackColor = Color.Black;
         playbackPanel.FlowDirection = FlowDirection.LeftToRight;
-        playbackPanel.Height = 42;
-        playbackPanel.Location = new Point(420, 736);
+        playbackPanel.Height = 150;
+        playbackPanel.Location = new Point(804, 642);
         playbackPanel.Name = "playbackPanel";
-        playbackPanel.Padding = new Padding(8, 6, 8, 4);
-        playbackPanel.Width = 840;
+        playbackPanel.Padding = new Padding(12);
+        playbackPanel.Width = 452;
         playbackPanel.WrapContents = false;
         playbackPanel.Visible = false;
+
+        playbackControl.Margin = new Padding(0);
+        playbackControl.Name = "playbackControl";
+        playbackControl.Size = new Size(428, 126);
 
         sidePanel.AutoScroll = true;
         sidePanel.Dock = DockStyle.Right;
@@ -206,7 +196,6 @@ partial class MainForm
         ConfigureStatusLabels();
 
         sidePanel.Controls.Add(MakeHeader("Camera"));
-        sidePanel.Controls.Add(MakeRowPanel(btnTestIpCamera, btnOpenCameraWeb, btnCopyRtspUrl));
         sidePanel.Controls.Add(MakeRowPanel(btnConnectCamera, btnDisconnectCamera));
         sidePanel.Controls.Add(MakeRowPanel(btnOpenCamera, btnCloseCamera));
         sidePanel.Controls.Add(btnLoadVideoFile);
@@ -220,11 +209,7 @@ partial class MainForm
         sidePanel.Controls.Add(MakeBottomSpacer());
         sidePanel.Controls.Add(MakeRowPanel(btnApplyCamera, btnDefaultSettings));
 
-        playbackPanel.Controls.Add(btnPlaybackPrevFrame);
-        playbackPanel.Controls.Add(btnPlaybackPlayPause);
-        playbackPanel.Controls.Add(btnPlaybackNextFrame);
-        playbackPanel.Controls.Add(trkPlaybackTimeline);
-        playbackPanel.Controls.Add(lblPlaybackInfo);
+        playbackPanel.Controls.Add(playbackControl);
 
         Controls.Add(picCameraPreview);
         Controls.Add(sidePanel);
@@ -297,9 +282,6 @@ partial class MainForm
         btnCloseCamera.Text = "Close Camera";
         btnLoadVideoFile.Text = "Load Video";
         btnCameraProperty.Text = "F1";
-        btnTestIpCamera.Text = "Test";
-        btnOpenCameraWeb.Text = "Web";
-        btnCopyRtspUrl.Text = "Copy";
         btnSettings.Text = "Settings";
 
         SetPanelControlWidth(cmbCameraList);
@@ -315,9 +297,6 @@ partial class MainForm
         btnCloseCamera.Width = 230;
         SetPanelControlWidth(btnLoadVideoFile);
         btnCameraProperty.Width = 48;
-        btnTestIpCamera.Width = 88;
-        btnOpenCameraWeb.Width = 88;
-        btnCopyRtspUrl.Width = 88;
         btnSettings.Width = 230;
     }
 
@@ -378,39 +357,11 @@ partial class MainForm
         btnStopRecording.Text = "Stop Rec";
         btnSaveHomeReference.Text = "Save Diff Base";
         btnOpenEventList.Text = "Recent Events";
-        btnPlaybackPrevFrame.Text = "<<";
-        btnPlaybackPlayPause.Text = ">";
-        btnPlaybackNextFrame.Text = ">>";
-        foreach (var button in new[] { btnPlaybackPrevFrame, btnPlaybackPlayPause, btnPlaybackNextFrame })
-        {
-            button.BackColor = Color.FromArgb(45, 45, 45);
-            button.FlatStyle = FlatStyle.Flat;
-            button.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
-            button.ForeColor = Color.White;
-            button.Height = 28;
-            button.UseVisualStyleBackColor = false;
-        }
-
-        lblPlaybackInfo.Text = "Playback: n/a";
-        lblPlaybackInfo.ForeColor = Color.White;
-        lblPlaybackInfo.AutoSize = true;
-        lblPlaybackInfo.TextAlign = ContentAlignment.MiddleLeft;
         btnOpenStorageFolder.Width = 230;
         btnStartRecording.Width = 230;
         btnStopRecording.Width = 230;
         SetPanelControlWidth(btnSaveHomeReference);
         SetPanelControlWidth(btnOpenEventList);
-        btnPlaybackPrevFrame.Width = 64;
-        btnPlaybackPlayPause.Width = 64;
-        btnPlaybackNextFrame.Width = 64;
-        trkPlaybackTimeline.BackColor = Color.FromArgb(20, 20, 20);
-        trkPlaybackTimeline.Width = 330;
-        trkPlaybackTimeline.Height = 30;
-        trkPlaybackTimeline.Minimum = 0;
-        trkPlaybackTimeline.Maximum = 0;
-        trkPlaybackTimeline.TickStyle = TickStyle.None;
-        trkPlaybackTimeline.Margin = new Padding(6, 2, 0, 0);
-        lblPlaybackInfo.Margin = new Padding(10, 8, 0, 0);
     }
 
     private void ConfigureStatusLabels()

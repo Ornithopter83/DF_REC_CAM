@@ -34,7 +34,7 @@ public sealed class IpCameraSettings
     public string IpAddress { get; set; } = "192.168.10.100";
     public int RtspPort { get; set; } = 554;
     public int HttpPort { get; set; } = 80;
-    public string Username { get; set; } = "admin";
+    public string Username { get; set; } = "";
     public string Password { get; set; } = "";
     public string StreamPath { get; set; } = "/stream1";
     public bool UseManualRtspUrl { get; set; }
