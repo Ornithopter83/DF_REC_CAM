@@ -71,6 +71,18 @@ public sealed partial class MainForm : Form
     private bool _updatingPlaybackTimeline;
     private bool _cameraListRefreshInProgress;
     private bool _applyingSettingsToUi;
+    private bool _settingsDialogOpen;
+    private bool _fullScreenMode;
+    private Rectangle _normalBounds;
+    private FormBorderStyle _normalBorderStyle;
+    private FormWindowState _normalWindowState;
+    private bool _normalTopMost;
+    private bool _normalSidePanelVisible;
+    private bool _normalStatusStripVisible;
+    private bool _normalPlaybackPanelVisible;
+    private FullScreenHintControl? _fullScreenHint;
+    private System.Windows.Forms.Timer? _fullScreenHintTimer;
+    private DateTime _fullScreenHintStartedAt;
     private const double OverlayReferenceHeight = 1080.0;
 
     private enum RoiEditMode
@@ -98,6 +110,7 @@ public sealed partial class MainForm : Form
     {
         _startInTray = startInTray;
         InitializeComponent();
+        InitializeFullScreenHint();
         WireEvents();
         try
         {
@@ -1206,7 +1219,7 @@ public sealed partial class MainForm : Form
             DrawPlaybackDiffOverlay(output, result);
         }
 
-        if (_recordingService.IsRecording && stateResult is not null)
+        if (_recordingService.IsRecording && stateResult is not null && _settings.Overlay.ShowDebugText)
         {
             DrawRecordingHoldOverlay(output, result, stateResult);
         }
@@ -1583,8 +1596,16 @@ public sealed partial class MainForm : Form
 
     private void OpenSettingsDialog()
     {
-        using var form = new SettingsForm(_settings, ApplySettingsFromDialog, rdoFullRecording.Checked);
-        form.ShowDialog(this);
+        _settingsDialogOpen = true;
+        try
+        {
+            using var form = new SettingsForm(_settings, ApplySettingsFromDialog, rdoFullRecording.Checked);
+            form.ShowDialog(this);
+        }
+        finally
+        {
+            _settingsDialogOpen = false;
+        }
     }
 
     private void ApplySettingsFromDialog()
@@ -1767,6 +1788,20 @@ public sealed partial class MainForm : Form
             BlackboxState.Error => "오류",
             _ => state.ToString()
         };
+    }
+
+    private void InitializeFullScreenHint()
+    {
+        _fullScreenHint = new FullScreenHintControl
+        {
+            Text = "전체 화면을 종료하려면 F11키를 누르세요",
+            Visible = false
+        };
+        picCameraPreview.Controls.Add(_fullScreenHint);
+        PositionFullScreenHint();
+
+        _fullScreenHintTimer = new System.Windows.Forms.Timer { Interval = 40 };
+        _fullScreenHintTimer.Tick += (_, _) => UpdateFullScreenHintFade();
     }
 
     private void SyncOverlaySettings()
@@ -2360,6 +2395,18 @@ public sealed partial class MainForm : Form
 
     private void MainForm_KeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.KeyCode == Keys.F11)
+        {
+            if (!_settingsDialogOpen)
+            {
+                ToggleFullScreen();
+            }
+
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            return;
+        }
+
         if (_isPlaybackMode)
         {
             if (e.KeyCode == Keys.Add)
@@ -2390,6 +2437,125 @@ public sealed partial class MainForm : Form
         }
     }
 
+    private void ToggleFullScreen()
+    {
+        if (_fullScreenMode)
+        {
+            ExitFullScreen();
+        }
+        else
+        {
+            EnterFullScreen();
+        }
+    }
+
+    private void EnterFullScreen()
+    {
+        if (_fullScreenMode)
+        {
+            return;
+        }
+
+        _normalWindowState = WindowState;
+        _normalBorderStyle = FormBorderStyle;
+        _normalTopMost = TopMost;
+        _normalBounds = Bounds;
+        _normalSidePanelVisible = sidePanel.Visible;
+        _normalStatusStripVisible = statusStrip.Visible;
+        _normalPlaybackPanelVisible = playbackPanel.Visible;
+
+        _fullScreenMode = true;
+        sidePanel.Visible = false;
+        statusStrip.Visible = false;
+        playbackPanel.Visible = false;
+
+        SuspendLayout();
+        WindowState = FormWindowState.Normal;
+        FormBorderStyle = FormBorderStyle.None;
+        Bounds = Screen.FromControl(this).Bounds;
+        TopMost = true;
+        ResumeLayout(true);
+
+        ShowFullScreenHint();
+    }
+
+    private void ExitFullScreen()
+    {
+        if (!_fullScreenMode)
+        {
+            return;
+        }
+
+        _fullScreenMode = false;
+        _fullScreenHintTimer?.Stop();
+        if (_fullScreenHint is not null)
+        {
+            _fullScreenHint.Visible = false;
+        }
+
+        SuspendLayout();
+        TopMost = _normalTopMost;
+        FormBorderStyle = _normalBorderStyle;
+        Bounds = _normalBounds;
+        WindowState = _normalWindowState;
+        sidePanel.Visible = _normalSidePanelVisible;
+        statusStrip.Visible = _normalStatusStripVisible;
+        playbackPanel.Visible = _normalPlaybackPanelVisible;
+        ResumeLayout(true);
+    }
+
+    private void ShowFullScreenHint()
+    {
+        if (_fullScreenHint is null || _fullScreenHintTimer is null)
+        {
+            return;
+        }
+
+        PositionFullScreenHint();
+        _fullScreenHint.Opacity = 255;
+        _fullScreenHint.Visible = true;
+        _fullScreenHint.BringToFront();
+        _fullScreenHintStartedAt = DateTime.Now;
+        _fullScreenHintTimer.Stop();
+        _fullScreenHintTimer.Start();
+    }
+
+    private void UpdateFullScreenHintFade()
+    {
+        if (_fullScreenHint is null || _fullScreenHintTimer is null)
+        {
+            return;
+        }
+
+        var elapsed = (DateTime.Now - _fullScreenHintStartedAt).TotalMilliseconds;
+        const double holdMs = 900;
+        const double fadeMs = 1800;
+        if (elapsed <= holdMs)
+        {
+            _fullScreenHint.Opacity = 255;
+            return;
+        }
+
+        var fadeRatio = Math.Clamp((elapsed - holdMs) / fadeMs, 0, 1);
+        _fullScreenHint.Opacity = (int)Math.Round(255 * (1 - fadeRatio));
+        if (fadeRatio >= 1)
+        {
+            _fullScreenHintTimer.Stop();
+            _fullScreenHint.Visible = false;
+        }
+    }
+
+    private void PositionFullScreenHint()
+    {
+        if (_fullScreenHint is null)
+        {
+            return;
+        }
+
+        _fullScreenHint.Bounds = new Rectangle(0, 28, picCameraPreview.ClientSize.Width, 60);
+        _fullScreenHint.BringToFront();
+    }
+
     private async void MainForm_FormClosing(object? sender, FormClosingEventArgs e)
     {
         if (_shutdownCompleted)
@@ -2412,6 +2578,7 @@ public sealed partial class MainForm : Form
         ExitPlaybackMode(clearPreview: false);
         _cleanupTimer?.Dispose();
         _autoStartFullRecordingTimer?.Dispose();
+        _fullScreenHintTimer?.Dispose();
         _recordingService?.Dispose();
         _detectionService.Dispose();
         _cameraService.Dispose();
@@ -2427,6 +2594,7 @@ public sealed partial class MainForm : Form
 
     private void MainForm_Resize(object? sender, EventArgs e)
     {
+        PositionFullScreenHint();
         if (WindowState == FormWindowState.Minimized)
         {
             HideToTray();
@@ -2610,5 +2778,58 @@ public sealed partial class MainForm : Form
     private static float OverlayPenWidth(double scale)
     {
         return 2F;
+    }
+
+    private sealed class FullScreenHintControl : Control
+    {
+        private int _opacity = 255;
+
+        public int Opacity
+        {
+            get => _opacity;
+            set
+            {
+                var clamped = Math.Clamp(value, 0, 255);
+                if (_opacity == clamped)
+                {
+                    return;
+                }
+
+                _opacity = clamped;
+                Invalidate();
+            }
+        }
+
+        public FullScreenHintControl()
+        {
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer
+                | ControlStyles.ResizeRedraw
+                | ControlStyles.UserPaint
+                | ControlStyles.SupportsTransparentBackColor,
+                true);
+            BackColor = Color.Transparent;
+            Font = new Font("Malgun Gothic", 20F, FontStyle.Bold);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            if (Opacity <= 0 || string.IsNullOrWhiteSpace(Text))
+            {
+                return;
+            }
+
+            e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            var alpha = Math.Clamp(Opacity, 0, 255);
+            using var shadow = new SolidBrush(Color.FromArgb(alpha * 160 / 255, Color.Black));
+            using var foreground = new SolidBrush(Color.FromArgb(alpha, Color.White));
+            var size = e.Graphics.MeasureString(Text, Font);
+            var x = (Width - size.Width) / 2F;
+            var y = (Height - size.Height) / 2F;
+            e.Graphics.DrawString(Text, Font, shadow, x + 2, y + 2);
+            e.Graphics.DrawString(Text, Font, foreground, x, y);
+        }
     }
 }

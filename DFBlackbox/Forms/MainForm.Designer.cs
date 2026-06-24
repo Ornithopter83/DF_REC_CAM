@@ -218,7 +218,7 @@ partial class MainForm
 
         AutoScaleDimensions = new SizeF(7F, 15F);
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(1280, 820);
+        ClientSize = new Size(1140, 502);
         KeyPreview = true;
         Location = new Point(10, 10);
         Name = "MainForm";

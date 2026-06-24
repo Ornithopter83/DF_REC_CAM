@@ -8,7 +8,7 @@
 - 주 폼: `DFBlackbox/Forms/MainForm.cs`
 - GitHub 원격 저장소: `https://github.com/Ornithopter83/DF_REC_CAM.git`
 - 현재 브랜치: `main`
-- 최근 로컬 커밋: `d2544f8 ONVIF 카메라 검색과 한글 UI 적용`
+- 현재 목표: README와 인수인계 문서를 한글화하고, 전체 변경분을 커밋 후 원격에 푸시한 상태로 다음 스레드에 넘긴다.
 
 ## 최근 완료 작업
 
@@ -28,6 +28,22 @@
 - RTSP URI가 없으면 기존 스트림 경로 후보를 유지하면서 IP/포트만 채운다.
 - UI 전체를 1차 한글화했다.
 - Settings 폼 폭을 넓히고 메뉴를 가로 배치해서 `확인 / 적용 / 취소` 버튼이 보이기 쉽게 조정했다.
+- `재생 추적 후보` 항목을 위로 올려 설정 폼 하단 버튼이 스크롤 없이 보이도록 조정했다.
+- 녹화 해상도 옵션에 `320x240`을 추가했다.
+- 녹화 비트 전송률 설정을 추가했다.
+  - 낮음: `320 kbps`
+  - 보통: `800 kbps`
+  - 높음: `2.5 Mbps`
+- 정확한 비트 전송률 적용을 위해 녹화 저장 경로를 FFmpeg 기반으로 변경했다.
+- 저해상도 입력에서도 UI 오버레이가 과하게 확대되지 않도록, 프리뷰 표시용 오버레이는 1080p 높이 기준의 고정 크기로 그린다.
+- 모든 오버레이를 껐을 때 `KEEP: unknown` 상태창이 남지 않도록 `디버그 텍스트` 설정에 연결했다.
+- 창 모드 기본 크기를 640x480 프리뷰 영역 기준으로 조정했다.
+- F11 전체화면/에디터 화면 전환을 추가했다.
+  - Settings 폼이 열려 있을 때는 F11 전환을 실행하지 않는다.
+  - 전체화면 진입 시 오른쪽 조작 패널, 상태바, 재생 패널을 숨긴다.
+  - 다시 F11을 누르면 이전 화면 상태를 복원한다.
+  - 전체화면 진입 시 `전체 화면을 종료하려면 F11키를 누르세요` 문구를 20pt로 표시하고 페이드 아웃한다.
+- `README.txt`를 한글로 갱신했다.
 
 ## 현재 작업 흐름
 
@@ -64,6 +80,7 @@
 - `카메라 닫기`는 감시와 활성 녹화를 함께 정지한다.
 - 녹화 파일은 설정된 앱 데이터/녹화 루트 아래에 저장된다.
 - 로그는 설정된 로그 폴더에 저장된다.
+- F11 전체화면은 프리뷰 중심 표시용이며, 녹화 원본 프레임과 ROI 좌표 저장값은 변경하지 않는다.
 
 ## 재생
 
@@ -83,39 +100,32 @@
   - 랜덤 seek는 사용자 seek/step/redraw 때만 사용한다.
   - 재생 프리뷰는 UI 스레드에 즉시 반영된다.
 
-## 감지
+## 감지와 오버레이
 
 - 주 트리거는 `ROI_Diff`이다.
 - 기준 이미지는 `차이 기준 저장`으로 저장한다.
 - `ROI / 제외 ROI`와 `디버그 텍스트`는 설정 적용 한 번으로 반영된다.
 - 재생 오버레이는 메인 오버레이 설정을 따르고, 설정 변경 후 현재 프레임을 다시 그린다.
 - 녹화 출력은 오버레이 그래픽이 입혀지지 않은 원본 프레임을 MP4로 저장한다.
+- 저해상도 입력에서도 UI 글자와 선이 깨지지 않도록, 프리뷰 표시용 캔버스를 1080p 기준으로 만든 뒤 오버레이를 고정 크기로 그린다.
+  - ROI와 감지 박스 좌표는 원본 프레임 좌표에서 표시 캔버스 좌표로 변환한다.
+- `KEEP: unknown` 상태창은 `디버그 텍스트` 오버레이가 켜져 있을 때만 표시된다.
 
-## 최근 추가 작업
+## FFmpeg와 배포
 
-- 녹화 해상도 옵션에 `320x240`을 추가했다.
-- `SettingsForm`의 녹화 섹션에 `녹화 비트 전송률` 설정을 추가했다.
-  - 낮음: `320 kbps`
-  - 보통: `800 kbps`
-  - 높음: `2.5 Mbps`
-- 정확한 비트 전송률 적용을 위해 녹화 저장 경로를 FFmpeg 기반으로 변경했다.
-  - 앱 실행 폴더의 `ffmpeg.exe`, PATH의 `ffmpeg.exe`, 또는 앱에 임베드된 FFmpeg 리소스를 찾는다.
-  - 임베드된 리소스가 있으면 `%LOCALAPPDATA%\DFBlackbox\tools\ffmpeg.exe`로 추출해서 사용한다.
-  - 모두 없으면 녹화 시작 시 명확한 오류를 표시한다.
-  - 프레임은 BMP image pipe로 FFmpeg에 전달한다.
-  - 출력은 `libx264`, `yuv420p`, 지정 비트 전송률의 MP4로 저장한다.
+- `RecordingService`는 FFmpeg subprocess에 BMP image pipe로 프레임을 전달한다.
+- 출력 옵션은 `libx264`, `yuv420p`, 지정 비트 전송률의 MP4이다.
+- FFmpeg 탐색 순서:
+  1. 앱 실행 폴더의 `ffmpeg.exe`
+  2. PATH의 `ffmpeg.exe`
+  3. 앱에 임베드된 `DFBlackbox.ffmpeg.exe` 리소스
+- 임베드된 리소스가 있으면 `%LOCALAPPDATA%\DFBlackbox\tools\ffmpeg.exe`로 추출해서 사용한다.
+- 모두 없으면 녹화 시작 시 명확한 오류를 표시한다.
 - 솔루션 루트에 `ffmpeg.exe`가 있으면 게시 시 단일 `DFBlackbox.exe` 안에 임베드된다.
-  - `ffmpeg.exe`는 100MB를 초과하므로 일반 Git 커밋에는 넣지 않는다.
-  - `.gitignore`에서 `ffmpeg.exe`와 `.publishcheck/`를 제외했다.
-  - 로컬 확인 게시 명령: `dotnet publish DFBlackbox\DFBlackbox.csproj -c Release -o .publishcheck`
-  - 확인 결과 `.publishcheck\DFBlackbox.exe` 단일 파일이 생성되었다.
+- `ffmpeg.exe`는 약 221MB라 일반 Git 커밋에는 넣지 않는다.
+- `.gitignore`에서 `ffmpeg.exe`, `.buildcheck/`, `.publishcheck/`를 제외한다.
 
-## 다음 작업 후보
-
-- 실제 카메라 환경에서 320/800/2500 kbps 녹화 파일의 화질과 파일 크기 확인.
-- 필요하면 비트 전송률 단계 이름이나 값을 조정.
-
-## 최근 빌드
+## 최근 빌드 확인
 
 ```text
 dotnet build DFBlackbox\DFBlackbox.csproj -o .buildcheck
@@ -124,14 +134,29 @@ dotnet build DFBlackbox\DFBlackbox.csproj -o .buildcheck
 오류: 0
 ```
 
-## 최근 Git
+## 최근 Git 흐름
+
+이 문서를 넘기기 전 수행한 작업:
 
 ```text
 git status --short --branch
-커밋 직후 기준: clean, main tracks origin/main
+dotnet build DFBlackbox\DFBlackbox.csproj -o .buildcheck
+git add -A
+git commit -m "전체화면 전환과 한글 문서 정리"
+git push
+```
 
-git log --oneline -3
+직전 주요 커밋:
+
+```text
+0d87d65 녹화 비트 전송률과 단일 배포 FFmpeg 적용
 d2544f8 ONVIF 카메라 검색과 한글 UI 적용
 11e7c42 Improve playback controls and camera mode flow
-3059c3d Initial DFBlackbox project import
 ```
+
+## 다음 작업 후보
+
+- 실제 전체화면 동작을 앱에서 확인하고, 안내 문구 위치/페이드 시간을 필요하면 조정한다.
+- 실제 카메라 환경에서 320/800/2500 kbps 녹화 파일의 화질과 파일 크기를 확인한다.
+- 필요하면 비트 전송률 단계 이름이나 값을 조정한다.
+- README를 `README.md`로 전환할지 결정한다. 현재는 기존 파일명인 `README.txt`를 유지했다.
