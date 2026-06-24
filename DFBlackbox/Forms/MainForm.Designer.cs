@@ -195,13 +195,13 @@ partial class MainForm
         ConfigureRecordingControls();
         ConfigureStatusLabels();
 
-        sidePanel.Controls.Add(MakeHeader("Camera"));
+        sidePanel.Controls.Add(MakeHeader("카메라"));
         sidePanel.Controls.Add(MakeRowPanel(btnConnectCamera, btnDisconnectCamera));
         sidePanel.Controls.Add(MakeRowPanel(btnOpenCamera, btnCloseCamera));
         sidePanel.Controls.Add(btnLoadVideoFile);
         sidePanel.Controls.Add(btnSaveHomeReference);
         sidePanel.Controls.Add(btnWatchToggle);
-        sidePanel.Controls.Add(MakeSectionLabel("Recording / Storage"));
+        sidePanel.Controls.Add(MakeSectionLabel("녹화 / 저장소"));
         sidePanel.Controls.Add(MakeRowPanel(rdoManualRecording, rdoAutoRecording, rdoFullRecording));
         sidePanel.Controls.Add(MakeRowPanel(btnStartRecording, btnStopRecording));
         sidePanel.Controls.Add(MakeRowPanel(btnOpenStorageFolder, btnSettings));
@@ -240,10 +240,10 @@ partial class MainForm
 
     private void ConfigureCameraControls()
     {
-        rdoIpCamera.Text = "IP Camera";
+        rdoIpCamera.Text = "IP 카메라";
         rdoIpCamera.Checked = true;
         rdoIpCamera.AutoSize = true;
-        rdoUsbCamera.Text = "USB Camera";
+        rdoUsbCamera.Text = "USB 카메라";
         rdoUsbCamera.AutoSize = true;
 
         cmbCameraList.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -268,21 +268,21 @@ partial class MainForm
             "/Streaming/Channels/101",
             "/cam/realmonitor?channel=1&subtype=0"
         });
-        chkUseManualRtspUrl.Text = "Use manual RTSP URL";
+        chkUseManualRtspUrl.Text = "수동 RTSP URL 사용";
         chkUseManualRtspUrl.AutoSize = true;
         txtGeneratedRtspUrl.ReadOnly = true;
 
-        btnRefreshCamera.Text = "Refresh Cameras";
-        btnApplyCamera.Text = "SAVE";
-        btnWatchToggle.Text = "Start Watch";
-        btnDefaultSettings.Text = "Defaults";
-        btnConnectCamera.Text = "Connect";
-        btnDisconnectCamera.Text = "Disconnect";
-        btnOpenCamera.Text = "Open Camera";
-        btnCloseCamera.Text = "Close Camera";
-        btnLoadVideoFile.Text = "Load Video";
+        btnRefreshCamera.Text = "카메라 새로고침";
+        btnApplyCamera.Text = "저장";
+        btnWatchToggle.Text = "감시 시작";
+        btnDefaultSettings.Text = "기본값";
+        btnConnectCamera.Text = "연결";
+        btnDisconnectCamera.Text = "연결 해제";
+        btnOpenCamera.Text = "카메라 열기";
+        btnCloseCamera.Text = "카메라 닫기";
+        btnLoadVideoFile.Text = "영상 불러오기";
         btnCameraProperty.Text = "F1";
-        btnSettings.Text = "Settings";
+        btnSettings.Text = "설정";
 
         SetPanelControlWidth(cmbCameraList);
         SetPanelControlWidth(cmbResolution);
@@ -302,13 +302,13 @@ partial class MainForm
 
     private void ConfigureOverlayControls()
     {
-        chkShowPersonBox.Text = "Motion boxes";
-        chkShowMotionMask.Text = "Motion boxes";
-        chkShowRodRoi.Text = "ROI / Ignore_ROI";
+        chkShowPersonBox.Text = "움직임 박스";
+        chkShowMotionMask.Text = "움직임 박스";
+        chkShowRodRoi.Text = "ROI / 제외 ROI";
         chkShowHomeRoi.Text = "ROI";
-        chkShowDebugText.Text = "Debug text";
-        chkShowRecordingStatus.Text = "Recording status";
-        chkShowFrameTime.Text = "Frame time";
+        chkShowDebugText.Text = "디버그 텍스트";
+        chkShowRecordingStatus.Text = "녹화 상태";
+        chkShowFrameTime.Text = "프레임 시간";
         foreach (var checkBox in new[] { chkShowPersonBox, chkShowMotionMask, chkShowRodRoi, chkShowHomeRoi, chkShowDebugText, chkShowRecordingStatus, chkShowFrameTime })
         {
             checkBox.AutoSize = true;
@@ -345,18 +345,18 @@ partial class MainForm
 
     private void ConfigureRecordingControls()
     {
-        btnOpenStorageFolder.Text = "Storage";
-        rdoManualRecording.Text = "Manual";
+        btnOpenStorageFolder.Text = "저장소";
+        rdoManualRecording.Text = "수동";
         rdoManualRecording.Checked = true;
         rdoManualRecording.AutoSize = true;
-        rdoAutoRecording.Text = "Auto";
+        rdoAutoRecording.Text = "자동";
         rdoAutoRecording.AutoSize = true;
-        rdoFullRecording.Text = "Full";
+        rdoFullRecording.Text = "전체";
         rdoFullRecording.AutoSize = true;
-        btnStartRecording.Text = "Start Rec";
-        btnStopRecording.Text = "Stop Rec";
-        btnSaveHomeReference.Text = "Save Diff Base";
-        btnOpenEventList.Text = "Recent Events";
+        btnStartRecording.Text = "녹화 시작";
+        btnStopRecording.Text = "녹화 정지";
+        btnSaveHomeReference.Text = "차이 기준 저장";
+        btnOpenEventList.Text = "최근 이벤트";
         btnOpenStorageFolder.Width = 230;
         btnStartRecording.Width = 230;
         btnStopRecording.Width = 230;
@@ -366,15 +366,15 @@ partial class MainForm
 
     private void ConfigureStatusLabels()
     {
-        lblCameraStatus.Text = "Camera: idle";
-        lblRtspStatus.Text = "RTSP: n/a";
-        lblLastFrame.Text = "Last Frame: n/a";
+        lblCameraStatus.Text = "카메라: 대기";
+        lblRtspStatus.Text = "RTSP: 해당 없음";
+        lblLastFrame.Text = "마지막 프레임: 없음";
         lblFps.Text = "FPS: 0";
-        lblDetectionStatus.Text = "Detection: idle";
-        lblAlgorithmStatus.Text = "Algo: off";
-        lblRecordingStatus.Text = "Recording: off";
-        lblDiskStatus.Text = "Disk: unknown";
-        lblErrorStatus.Text = "Error: none";
+        lblDetectionStatus.Text = "감지: 대기";
+        lblAlgorithmStatus.Text = "알고리즘: 꺼짐";
+        lblRecordingStatus.Text = "녹화: 꺼짐";
+        lblDiskStatus.Text = "디스크: 알 수 없음";
+        lblErrorStatus.Text = "오류: 없음";
     }
 
     private static Label MakeHeader(string text) => new()

@@ -33,7 +33,7 @@ public sealed partial class MainForm : Form
     private double _minHomeDiffScore = double.MaxValue;
     private DateTime _lastFrameAt = DateTime.MinValue;
     private DateTime _lastDiskStatusAt = DateTime.MinValue;
-    private string _cachedDiskStatus = "Disk: unknown";
+    private string _cachedDiskStatus = "디스크: 알 수 없음";
     private int _consecutiveFrameFailures;
     private readonly FpsCounter _algorithmFpsCounter = new();
     private double _lastAlgorithmMs;
@@ -104,7 +104,7 @@ public sealed partial class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"Startup failed: {ex.Message}", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, $"시작 실패: {ex.Message}", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -258,9 +258,9 @@ public sealed partial class MainForm : Form
         _detectionService.LoadHomeReference(_paths.HomeReferencePath);
         ApplySettingsToUi();
         _cleanupService.Cleanup(_settings.Storage);
-        lblCameraStatus.Text = "Camera: ready";
-        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? "RTSP: not connected" : "RTSP: n/a";
-        lblLastFrame.Text = "Last Frame: n/a";
+        lblCameraStatus.Text = "카메라: 준비";
+        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? "RTSP: 연결 안 됨" : "RTSP: 해당 없음";
+        lblLastFrame.Text = "마지막 프레임: 없음";
         UpdateControlStates();
         ScheduleAutoStartFullRecording();
     }
@@ -275,8 +275,8 @@ public sealed partial class MainForm : Form
             Visible = false,
             ContextMenuStrip = new ContextMenuStrip()
         };
-        _trayIcon.ContextMenuStrip.Items.Add("Open", null, (_, _) => RestoreFromTray());
-        _trayIcon.ContextMenuStrip.Items.Add("Exit", null, (_, _) => Close());
+        _trayIcon.ContextMenuStrip.Items.Add("열기", null, (_, _) => RestoreFromTray());
+        _trayIcon.ContextMenuStrip.Items.Add("종료", null, (_, _) => Close());
         _trayIcon.DoubleClick += (_, _) => RestoreFromTray();
     }
 
@@ -342,7 +342,7 @@ public sealed partial class MainForm : Form
         btnRefreshCamera.Enabled = false;
         if (rdoUsbCamera.Checked)
         {
-            lblCameraStatus.Text = "Camera: scanning USB";
+            lblCameraStatus.Text = "카메라: USB 검색 중";
         }
 
         List<int> indexes;
@@ -354,7 +354,7 @@ public sealed partial class MainForm : Form
         {
             indexes = [];
             _logger?.Error(ex, "USB camera scan failed");
-            lblErrorStatus.Text = $"Error: USB camera scan failed ({ex.Message})";
+            lblErrorStatus.Text = $"오류: USB 카메라 검색 실패 ({ex.Message})";
         }
 
         if (IsDisposed)
@@ -380,7 +380,7 @@ public sealed partial class MainForm : Form
             cmbCameraList.Text = "";
             if (rdoUsbCamera.Checked)
             {
-                lblCameraStatus.Text = "Camera: no USB camera found";
+                lblCameraStatus.Text = "카메라: USB 카메라 없음";
             }
         }
 
@@ -397,14 +397,14 @@ public sealed partial class MainForm : Form
             ReadDetectionSettingsFromUi();
             ReadRecordingSettingsFromUi();
             _settingsManager.Save(_settings);
-            lblCameraStatus.Text = "Settings: saved";
-            MessageBox.Show(this, "Settings saved.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            lblCameraStatus.Text = "설정: 저장됨";
+            MessageBox.Show(this, "설정을 저장했습니다.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
             _logger?.Error(ex, "Saving settings failed");
-            lblErrorStatus.Text = $"Error: {ex.Message}";
-            MessageBox.Show(this, $"Saving settings failed.\n\n{ex.Message}", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            lblErrorStatus.Text = $"오류: {ex.Message}";
+            MessageBox.Show(this, $"설정 저장에 실패했습니다.\n\n{ex.Message}", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -412,7 +412,7 @@ public sealed partial class MainForm : Form
     {
         if (_recordingService?.IsRecording == true)
         {
-            MessageBox.Show(this, "Stop recording before resetting defaults.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, "기본값으로 되돌리기 전에 녹화를 정지하세요.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
@@ -422,7 +422,7 @@ public sealed partial class MainForm : Form
         _detectionService.LoadBaselineReference(_paths.BaselineReferencePath);
         ApplySettingsToUi();
         _settingsManager.Save(_settings);
-        lblCameraStatus.Text = "Defaults: restored";
+        lblCameraStatus.Text = "기본값: 복원됨";
         UpdateControlStates();
     }
 
@@ -442,14 +442,14 @@ public sealed partial class MainForm : Form
         _isWatching = watching && !rdoFullRecording.Checked && IsCameraPreviewOpen();
         if (_isWatching)
         {
-            lblDetectionStatus.Text = File.Exists(_paths.BaselineReferencePath) ? "Detection: watching" : "Detection: baseline missing";
+            lblDetectionStatus.Text = File.Exists(_paths.BaselineReferencePath) ? "감지: 감시 중" : "감지: 기준 없음";
         }
         else
         {
-            lblDetectionStatus.Text = "Detection: manual";
+            lblDetectionStatus.Text = "감지: 수동";
         }
 
-        btnWatchToggle.Text = _isWatching ? "Stop Watch" : "Start Watch";
+        btnWatchToggle.Text = _isWatching ? "감시 정지" : "감시 시작";
         _stateMachine.AutoRecordingEnabled = _isWatching && rdoAutoRecording.Checked;
         UpdateControlStates();
     }
@@ -459,7 +459,7 @@ public sealed partial class MainForm : Form
         ExitPlaybackMode(clearPreview: true);
         if (_recordingService?.IsRecording == true)
         {
-            MessageBox.Show(this, "Recording is active. Stop recording before changing camera connection.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, "녹화 중입니다. 카메라 연결을 변경하기 전에 녹화를 정지하세요.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
@@ -467,7 +467,7 @@ public sealed partial class MainForm : Form
         ReadCameraSettingsFromUi();
         if (!_settings.Camera.IsIpCamera && !await EnsureUsbCameraSelectedAsync())
         {
-            lblCameraStatus.Text = "Camera: no USB camera found";
+            lblCameraStatus.Text = "카메라: USB 카메라 없음";
             UpdateControlStates();
             return;
         }
@@ -475,14 +475,14 @@ public sealed partial class MainForm : Form
         ReadDetectionSettingsFromUi();
         _settingsManager.Save(_settings);
         btnConnectCamera.Enabled = false;
-        lblCameraStatus.Text = "Camera: connecting";
-        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? "RTSP: Connecting" : "RTSP: n/a";
+        lblCameraStatus.Text = "카메라: 연결 중";
+        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? "RTSP: 연결 중" : "RTSP: 해당 없음";
         var opened = await Task.Run(() => _cameraService.Open(_settings));
         btnConnectCamera.Enabled = true;
         _lastFrameAt = DateTime.Now;
         _consecutiveFrameFailures = 0;
         lblCameraStatus.Text = opened ? GetCameraStatusText() : GetCameraErrorText();
-        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? $"RTSP: {_cameraService.ConnectionState}" : "RTSP: n/a";
+        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? $"RTSP: {_cameraService.ConnectionState}" : "RTSP: 해당 없음";
         UpdateControlStates();
     }
 
@@ -492,9 +492,9 @@ public sealed partial class MainForm : Form
         StopRecordingIfActive(DateTime.Now);
         _cameraService.Close();
         SetWatching(false);
-        lblCameraStatus.Text = "Camera: disconnected";
-        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? "RTSP: Disconnected" : "RTSP: n/a";
-        lblLastFrame.Text = "Last Frame: n/a";
+        lblCameraStatus.Text = "카메라: 연결 해제됨";
+        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? "RTSP: 연결 해제됨" : "RTSP: 해당 없음";
+        lblLastFrame.Text = "마지막 프레임: 없음";
         UpdateControlStates();
     }
 
@@ -525,7 +525,7 @@ public sealed partial class MainForm : Form
         var old = picCameraPreview.Image;
         picCameraPreview.Image = null;
         old?.Dispose();
-        lblCameraStatus.Text = _cameraService.IsOpened ? $"{GetCameraStatusText()} / closed" : "Camera: closed";
+        lblCameraStatus.Text = _cameraService.IsOpened ? $"{GetCameraStatusText()} / 닫힘" : "카메라: 닫힘";
         UpdateControlStates();
     }
 
@@ -533,8 +533,8 @@ public sealed partial class MainForm : Form
     {
         using var dialog = new OpenFileDialog
         {
-            Title = "Load recording video",
-            Filter = "Video files|*.mp4;*.avi;*.mov;*.mkv;*.wmv|All files|*.*",
+            Title = "녹화 영상 불러오기",
+            Filter = "영상 파일|*.mp4;*.avi;*.mov;*.mkv;*.wmv|모든 파일|*.*",
             InitialDirectory = Directory.Exists(_paths.RecVideos) ? _paths.RecVideos : AppContext.BaseDirectory
         };
 
@@ -573,7 +573,7 @@ public sealed partial class MainForm : Form
         playbackPanel.BringToFront();
         playbackControl.IsPlaying = false;
         playbackControl.Value = 0;
-        lblCameraStatus.Text = "Playback: loaded";
+        lblCameraStatus.Text = "재생: 불러옴";
         lblRtspStatus.Text = $"File: {Path.GetFileName(filePath)}";
         ShowPlaybackFrame(0);
         UpdateControlStates();
@@ -1128,7 +1128,7 @@ public sealed partial class MainForm : Form
             catch (Exception ex)
             {
                 _logger.Error(ex, "Capture loop failed");
-                BeginInvoke(() => lblErrorStatus.Text = $"Error: {ex.Message}");
+                BeginInvoke(() => lblErrorStatus.Text = $"오류: {ex.Message}");
                 await Task.Delay(500, token);
             }
         }
@@ -1142,8 +1142,8 @@ public sealed partial class MainForm : Form
             _cameraService.MarkReconnecting();
             BeginInvoke(() =>
             {
-                lblCameraStatus.Text = "Camera: reconnecting";
-                lblRtspStatus.Text = _settings.Camera.IsIpCamera ? "RTSP: Reconnecting" : "RTSP: n/a";
+                lblCameraStatus.Text = "카메라: 재연결 중";
+                lblRtspStatus.Text = _settings.Camera.IsIpCamera ? "RTSP: 재연결 중" : "RTSP: 해당 없음";
             });
             _cameraService.Close();
             await Task.Delay(TimeSpan.FromSeconds(_settings.Camera.ReconnectDelaySeconds), token);
@@ -1151,7 +1151,7 @@ public sealed partial class MainForm : Form
             BeginInvoke(() =>
             {
                 lblCameraStatus.Text = opened ? GetCameraStatusText() : GetCameraErrorText();
-                lblRtspStatus.Text = _settings.Camera.IsIpCamera ? $"RTSP: {_cameraService.ConnectionState}" : "RTSP: n/a";
+                lblRtspStatus.Text = _settings.Camera.IsIpCamera ? $"RTSP: {_cameraService.ConnectionState}" : "RTSP: 해당 없음";
             });
             _lastFrameAt = DateTime.Now;
             _consecutiveFrameFailures = 0;
@@ -1358,29 +1358,29 @@ public sealed partial class MainForm : Form
         lblFps.Text = $"FPS: {_fpsCounter.CurrentFps:0.0}";
         if (_isPlaybackMode)
         {
-            lblCameraStatus.Text = _playbackPlaying ? "Playback: playing" : "Playback: paused";
-            lblRtspStatus.Text = $"File: {Path.GetFileName(_playbackPath)}";
-            lblLastFrame.Text = _playbackFrameCount > 0 ? $"Frame: {_playbackFrameIndex + 1}/{_playbackFrameCount}" : $"Frame: {_playbackFrameIndex + 1}";
+            lblCameraStatus.Text = _playbackPlaying ? "재생: 재생 중" : "재생: 일시정지";
+            lblRtspStatus.Text = $"파일: {Path.GetFileName(_playbackPath)}";
+            lblLastFrame.Text = _playbackFrameCount > 0 ? $"프레임: {_playbackFrameIndex + 1}/{_playbackFrameCount}" : $"프레임: {_playbackFrameIndex + 1}";
         }
         else
         {
             lblCameraStatus.Text = GetCameraStatusText();
-            lblRtspStatus.Text = _settings.Camera.IsIpCamera ? $"RTSP: {_cameraService.ConnectionState}" : "RTSP: n/a";
-            lblLastFrame.Text = _lastFrameAt == DateTime.MinValue ? "Last Frame: n/a" : $"Last Frame: {(DateTime.Now - _lastFrameAt).TotalSeconds:0.0}s ago";
+            lblRtspStatus.Text = _settings.Camera.IsIpCamera ? $"RTSP: {_cameraService.ConnectionState}" : "RTSP: 해당 없음";
+            lblLastFrame.Text = _lastFrameAt == DateTime.MinValue ? "마지막 프레임: 없음" : $"마지막 프레임: {(DateTime.Now - _lastFrameAt).TotalSeconds:0.0}초 전";
         }
 
-        lblDetectionStatus.Text = $"Detection: P={result.PersonDetected} I={result.RodMotionScore:0.000} H={result.HomeStable}";
-        lblAlgorithmStatus.Text = _lastAlgorithmEnabled ? $"Algo: {_lastAlgorithmMs:0.0}ms / {_algorithmFpsCounter.CurrentFps:0.0}fps" : "Algo: off";
-        lblRecordingStatus.Text = _isPlaybackMode ? "Recording: playback mode" : _recordingService.IsRecording ? "Recording: on" : $"Recording: {_stateMachine.CurrentState}";
+        lblDetectionStatus.Text = $"감지: P={result.PersonDetected} I={result.RodMotionScore:0.000} H={result.HomeStable}";
+        lblAlgorithmStatus.Text = _lastAlgorithmEnabled ? $"알고리즘: {_lastAlgorithmMs:0.0}ms / {_algorithmFpsCounter.CurrentFps:0.0}fps" : "알고리즘: 꺼짐";
+        lblRecordingStatus.Text = _isPlaybackMode ? "녹화: 재생 모드" : _recordingService.IsRecording ? "녹화: 켜짐" : $"녹화: {FormatState(_stateMachine.CurrentState)}";
         UpdateControlStates();
         if (DateTime.Now - _lastDiskStatusAt > TimeSpan.FromSeconds(5))
         {
-            _cachedDiskStatus = $"Disk: {DiskUtils.GetUsedPercent(_paths.RecVideos):0.0}% used / Free: {DiskUtils.FormatBytes(DiskUtils.GetFreeDiskBytes(_paths.RecVideos))}";
+            _cachedDiskStatus = $"디스크: {DiskUtils.GetUsedPercent(_paths.RecVideos):0.0}% 사용 / 여유: {DiskUtils.FormatBytes(DiskUtils.GetFreeDiskBytes(_paths.RecVideos))}";
             _lastDiskStatusAt = DateTime.Now;
         }
 
         lblDiskStatus.Text = _cachedDiskStatus;
-        lblErrorStatus.Text = "Error: none";
+        lblErrorStatus.Text = "오류: 없음";
     }
 
     private void SaveEventLog(string filePath, DateTime endTime)
@@ -1425,7 +1425,7 @@ public sealed partial class MainForm : Form
 
     private bool BlockRecordingForDisk(DateTime now, string triggerReason, double usedPercent, int stopThreshold, int resumeThreshold)
     {
-        lblRecordingStatus.Text = $"Recording: disk {usedPercent:0.0}% full";
+        lblRecordingStatus.Text = $"녹화: 디스크 {usedPercent:0.0}% 사용";
         ShowRecordingStamp("Disk full", Color.FromArgb(178, 34, 34));
         if (now - _lastDiskFullLogAt > TimeSpan.FromMinutes(1))
         {
@@ -1579,7 +1579,7 @@ public sealed partial class MainForm : Form
         ApplySettingsToUi();
         _settingsManager.Save(_settings);
         StartCleanupSchedule(runStartupCleanup: false);
-        lblCameraStatus.Text = "Settings: saved";
+        lblCameraStatus.Text = "설정: 저장됨";
         RedrawPlaybackFrameIfActive();
     }
 
@@ -1623,13 +1623,13 @@ public sealed partial class MainForm : Form
         try
         {
             _logger.Info("Full auto start running.");
-            lblRecordingStatus.Text = "Recording: auto start pending";
+            lblRecordingStatus.Text = "녹화: 자동 시작 대기";
             rdoFullRecording.Checked = true;
             await Task.Delay(TimeSpan.FromSeconds(2));
             ReadCameraSettingsFromUi();
             if (!_settings.Camera.IsIpCamera && !await EnsureUsbCameraSelectedAsync())
             {
-                lblRecordingStatus.Text = "Recording: auto start failed, no USB camera";
+                lblRecordingStatus.Text = "녹화: 자동 시작 실패, USB 카메라 없음";
                 _logger.Info("Full auto start skipped: no USB camera found.");
                 return;
             }
@@ -1637,7 +1637,7 @@ public sealed partial class MainForm : Form
             await OpenCameraPreviewAsync();
             if (!await WaitForFirstCameraFrameAsync(TimeSpan.FromSeconds(20)))
             {
-                lblRecordingStatus.Text = "Recording: auto start failed, no frame";
+                lblRecordingStatus.Text = "녹화: 자동 시작 실패, 프레임 없음";
                 _logger.Info("Full auto start skipped: no frame received after camera open.");
                 return;
             }
@@ -1652,7 +1652,7 @@ public sealed partial class MainForm : Form
         catch (Exception ex)
         {
             _logger.Error(ex, "Full auto start failed");
-            lblRecordingStatus.Text = $"Recording: auto start failed ({ex.Message})";
+            lblRecordingStatus.Text = $"녹화: 자동 시작 실패 ({ex.Message})";
         }
         finally
         {
@@ -1730,15 +1730,30 @@ public sealed partial class MainForm : Form
     private string GetCameraStatusText()
     {
         return _settings.Camera.IsIpCamera
-            ? $"Camera: IP {_settings.Camera.IpCamera.IpAddress}"
-            : $"Camera: USB {_settings.Camera.UsbCamera.DeviceIndex}";
+            ? $"카메라: IP {_settings.Camera.IpCamera.IpAddress}"
+            : $"카메라: USB {_settings.Camera.UsbCamera.DeviceIndex}";
     }
 
     private string GetCameraErrorText()
     {
         return _settings.Camera.IsIpCamera
-            ? "Camera Error: IP camera connection failed"
-            : "Camera Error: USB camera connection failed";
+            ? "카메라 오류: IP 카메라 연결 실패"
+            : "카메라 오류: USB 카메라 연결 실패";
+    }
+
+    private static string FormatState(BlackboxState state)
+    {
+        return state switch
+        {
+            BlackboxState.Idle => "대기",
+            BlackboxState.Watching => "감시 중",
+            BlackboxState.PreEvent => "사전 이벤트",
+            BlackboxState.Recording => "녹화 중",
+            BlackboxState.WaitForStableHome => "안정 대기",
+            BlackboxState.Cooldown => "쿨다운",
+            BlackboxState.Error => "오류",
+            _ => state.ToString()
+        };
     }
 
     private void SyncOverlaySettings()
@@ -2016,7 +2031,7 @@ public sealed partial class MainForm : Form
     {
         if (!IsCameraPreviewOpen())
         {
-            lblRecordingStatus.Text = "Recording: open camera first";
+            lblRecordingStatus.Text = "녹화: 먼저 카메라를 여세요";
             UpdateControlStates();
             return;
         }
@@ -2046,7 +2061,7 @@ public sealed partial class MainForm : Form
             RotateFullRecordingIfDue(DateTime.Now, _latestFrame);
         }
 
-        lblRecordingStatus.Text = $"Recording: full every {GetFullInterval().TotalMinutes:0}m";
+        lblRecordingStatus.Text = $"녹화: {GetFullInterval().TotalMinutes:0}분마다 전체 녹화";
         UpdateControlStates();
         return Task.CompletedTask;
     }
@@ -2058,7 +2073,7 @@ public sealed partial class MainForm : Form
         _fullRecordingRequested = false;
         _nextFullRecordingRotationAt = DateTime.MinValue;
         StopRecordingIfActive(DateTime.Now);
-        lblRecordingStatus.Text = "Recording: stopped";
+        lblRecordingStatus.Text = "녹화: 정지됨";
         UpdateControlStates();
     }
 
@@ -2072,7 +2087,7 @@ public sealed partial class MainForm : Form
         if (_recordingService.IsRecording)
         {
             var filePath = _recordingService.StopRecording(now);
-            ShowRecordingStamp("Recording stopped", Color.FromArgb(192, 92, 24));
+            ShowRecordingStamp("녹화 정지", Color.FromArgb(192, 92, 24));
             SaveEventLog(filePath, now);
         }
 
@@ -2085,7 +2100,7 @@ public sealed partial class MainForm : Form
         }
 
         _recordingService.StartRecording(now, "Full", frame);
-        ShowRecordingStamp("Recording started", Color.FromArgb(24, 132, 74));
+        ShowRecordingStamp("녹화 시작", Color.FromArgb(24, 132, 74));
         _currentRecordingStartedAt = now;
         _currentTriggerReason = "Full";
         _maxMotionScore = 0;
@@ -2124,7 +2139,7 @@ public sealed partial class MainForm : Form
             }
 
             _recordingService.StartRecording(now, "Manual", _latestFrame);
-            ShowRecordingStamp("Recording started", Color.FromArgb(24, 132, 74));
+            ShowRecordingStamp("녹화 시작", Color.FromArgb(24, 132, 74));
             _currentRecordingStartedAt = now;
             _currentTriggerReason = "Manual";
             _maxMotionScore = 0;
@@ -2132,7 +2147,7 @@ public sealed partial class MainForm : Form
             _minHomeDiffScore = double.MaxValue;
         }
 
-        lblRecordingStatus.Text = "Recording: manual requested";
+        lblRecordingStatus.Text = "녹화: 수동 요청됨";
         UpdateControlStates();
         return Task.CompletedTask;
     }
@@ -2142,7 +2157,7 @@ public sealed partial class MainForm : Form
         _stateMachine.RequestManualRecordingStop();
         _manualRecordingRequested = false;
         StopRecordingIfActive(DateTime.Now);
-        lblRecordingStatus.Text = "Recording: stopped";
+        lblRecordingStatus.Text = "녹화: 정지됨";
         UpdateControlStates();
     }
 
@@ -2158,7 +2173,7 @@ public sealed partial class MainForm : Form
         }
 
         var filePath = _recordingService.StopRecording(endTime);
-        ShowRecordingStamp("Recording stopped", Color.FromArgb(192, 92, 24));
+        ShowRecordingStamp("녹화 정지", Color.FromArgb(192, 92, 24));
         SaveEventLog(filePath, endTime);
         _stateMachine.CompleteRecording(endTime);
         UpdateControlStates();
@@ -2286,7 +2301,7 @@ public sealed partial class MainForm : Form
         catch (Exception ex)
         {
             _logger.Error(ex, "Saving home reference failed");
-            lblErrorStatus.Text = $"Error: {ex.Message}";
+            lblErrorStatus.Text = $"오류: {ex.Message}";
         }
     }
 
@@ -2294,7 +2309,7 @@ public sealed partial class MainForm : Form
     {
         if (_latestFrame is null)
         {
-            lblDetectionStatus.Text = "Detection: no frame to save";
+            lblDetectionStatus.Text = "감지: 저장할 프레임 없음";
             return;
         }
 
@@ -2302,12 +2317,12 @@ public sealed partial class MainForm : Form
         {
             _detectionService.SaveBaselineReference(_latestFrame, _paths.BaselineReferencePath);
             _logger.Info($"Detection baseline reference saved: {_paths.BaselineReferencePath}");
-            lblDetectionStatus.Text = "Detection: baseline saved";
+            lblDetectionStatus.Text = "감지: 기준 저장됨";
         }
         catch (Exception ex)
         {
             _logger.Error(ex, "Saving detection baseline failed");
-            lblErrorStatus.Text = $"Error: {ex.Message}";
+            lblErrorStatus.Text = $"오류: {ex.Message}";
         }
     }
 
@@ -2315,7 +2330,7 @@ public sealed partial class MainForm : Form
     {
         if (_settings.Camera.IsIpCamera)
         {
-            MessageBox.Show(this, "Camera property controls are available for USB cameras. Use the camera web page for IP camera settings.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, "카메라 속성 조정은 USB 카메라에서 사용할 수 있습니다. IP 카메라 설정은 카메라 웹 페이지를 사용하세요.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
