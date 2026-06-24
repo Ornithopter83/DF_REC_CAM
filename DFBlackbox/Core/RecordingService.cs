@@ -1,0 +1,339 @@
+using DFBlackbox.Models;
+using DFBlackbox.Utils;
+using OpenCvSharp;
+
+namespace DFBlackbox.Core;
+
+public sealed class RecordingService : IDisposable
+{
+    private sealed record BufferedFrame(Mat Frame, DateTime Timestamp, long SizeBytes);
+
+    private readonly AppSettings _settings;
+    private readonly AppPaths _paths;
+    private readonly Queue<BufferedFrame> _preBuffer = new();
+    private readonly object _sync = new();
+    private VideoWriter? _writer;
+    private OpenCvSharp.Size _writerSize;
+    private string _activeRecordingPath = "";
+    private string _activeFinalPath = "";
+    private string _triggerReason = "";
+    private DateTime _startTime;
+    private DateTime _nextFrameDue = DateTime.MinValue;
+    private int _recordingFps = 1;
+    private TimeSpan _frameInterval = TimeSpan.FromSeconds(1);
+    private Mat? _lastWrittenFrame;
+    private long _preBufferBytes;
+
+    public RecordingService(AppSettings settings, AppPaths paths)
+    {
+        _settings = settings;
+        _paths = paths;
+    }
+
+    public bool IsRecording
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _writer is not null;
+            }
+        }
+    }
+    public string ActiveRecordingPath => _activeRecordingPath;
+
+    public void AddToPreBuffer(Mat frame, DateTime timestamp)
+    {
+        lock (_sync)
+        {
+            if (_writer is not null)
+            {
+                return;
+            }
+
+            var clone = frame.Clone();
+            var sizeBytes = EstimateMatBytes(clone);
+            _preBuffer.Enqueue(new BufferedFrame(clone, timestamp, sizeBytes));
+            _preBufferBytes += sizeBytes;
+            var maxFrames = Math.Max(1, _settings.Detection.PreBufferSeconds * Math.Max(1, _settings.Camera.ActiveFps));
+            var maxBytes = Math.Max(1, _settings.Detection.PreBufferMaxMemoryMB) * 1024L * 1024L;
+            while (_preBuffer.Count > maxFrames || _preBufferBytes > maxBytes)
+            {
+                DisposeBufferedFrame(_preBuffer.Dequeue());
+            }
+        }
+    }
+
+    public void StartRecording(DateTime startTime, string triggerReason, Mat? firstFrame = null)
+    {
+        lock (_sync)
+        {
+            if (_writer is not null)
+            {
+                return;
+            }
+
+            _triggerReason = triggerReason;
+            _startTime = startTime;
+            _recordingFps = GetRecordingFps();
+            _frameInterval = TimeSpan.FromSeconds(1.0 / _recordingFps);
+            _nextFrameDue = _preBuffer.Count > 0 ? _preBuffer.Peek().Timestamp : startTime;
+            _lastWrittenFrame?.Dispose();
+            _lastWrittenFrame = null;
+            var recordingFolder = GetRecordingFolder(startTime);
+            Directory.CreateDirectory(recordingFolder);
+            var prefix = CreateUniqueRecordingPrefix(startTime);
+            _activeRecordingPath = Path.Combine(recordingFolder, $"{prefix}.recording.mp4");
+            _activeFinalPath = Path.Combine(recordingFolder, $"{prefix}.mp4");
+
+            var size = GetRecordingSize(firstFrame);
+            var fourcc = VideoWriter.FourCC('m', 'p', '4', 'v');
+            _writer = new VideoWriter(_activeRecordingPath, fourcc, _recordingFps, size);
+            if (!_writer.IsOpened())
+            {
+                _writer.Dispose();
+                _writer = null;
+                throw new InvalidOperationException("VideoWriter could not open the recording file.");
+            }
+
+            _writerSize = size;
+            foreach (var bufferedFrame in _preBuffer)
+            {
+                WriteFrameForTimestampUnsafe(bufferedFrame.Frame, bufferedFrame.Timestamp);
+            }
+
+            ClearPreBufferUnsafe();
+        }
+    }
+
+    public void WriteFrame(Mat frame, DateTime timestamp)
+    {
+        lock (_sync)
+        {
+            if (_writer is null)
+            {
+                return;
+            }
+
+            WriteFrameForTimestampUnsafe(frame, timestamp);
+        }
+    }
+
+    public string StopRecording(DateTime endTime)
+    {
+        lock (_sync)
+        {
+            if (_writer is null)
+            {
+                return "";
+            }
+
+            _writer.Release();
+            _writer.Dispose();
+            _writer = null;
+            _writerSize = default;
+            _nextFrameDue = DateTime.MinValue;
+            _lastWrittenFrame?.Dispose();
+            _lastWrittenFrame = null;
+
+            if (File.Exists(_activeFinalPath))
+            {
+                File.Delete(_activeFinalPath);
+            }
+
+            File.Move(_activeRecordingPath, _activeFinalPath);
+            ClearPreBufferUnsafe();
+            return _activeFinalPath;
+        }
+    }
+
+    public void RecoverCrashedRecordings()
+    {
+        foreach (var folder in new[] { _paths.EventVideos, _paths.ManualVideos, _paths.RecVideos })
+        {
+            if (!Directory.Exists(folder))
+            {
+                continue;
+            }
+
+            foreach (var file in Directory.EnumerateFiles(folder, "*.recording.mp4", SearchOption.AllDirectories))
+            {
+                var crashed = Path.ChangeExtension(file, null) + ".crashed.mp4";
+                if (File.Exists(crashed))
+                {
+                    File.Delete(crashed);
+                }
+
+                File.Move(file, crashed);
+            }
+        }
+    }
+
+    private void WriteMatUnsafe(Mat frame)
+    {
+        if (_writer is null)
+        {
+            return;
+        }
+
+        using var output = new Mat();
+        if (frame.Width != _writerSize.Width || frame.Height != _writerSize.Height)
+        {
+            Cv2.Resize(frame, output, _writerSize);
+            _writer.Write(output);
+        }
+        else
+        {
+            _writer.Write(frame);
+        }
+    }
+
+    private void WriteFrameForTimestampUnsafe(Mat frame, DateTime timestamp)
+    {
+        if (_writer is null)
+        {
+            return;
+        }
+
+        if (_nextFrameDue == DateTime.MinValue)
+        {
+            _nextFrameDue = timestamp;
+        }
+
+        if (timestamp < _nextFrameDue)
+        {
+            return;
+        }
+
+        var framesToWrite = 1 + (int)Math.Floor((timestamp - _nextFrameDue).TotalSeconds * _recordingFps);
+        var maxCatchUpFrames = Math.Max(1, _recordingFps * 2);
+        if (framesToWrite > maxCatchUpFrames)
+        {
+            framesToWrite = 1;
+            _nextFrameDue = timestamp;
+        }
+
+        for (var i = 0; i < framesToWrite; i++)
+        {
+            WriteMatUnsafe(frame);
+            _nextFrameDue += _frameInterval;
+        }
+
+        _lastWrittenFrame?.Dispose();
+        _lastWrittenFrame = frame.Clone();
+    }
+
+    private int GetRecordingFps()
+    {
+        return Math.Clamp(_settings.Camera.ActiveFps, 1, 60);
+    }
+
+    private OpenCvSharp.Size GetRecordingSize(Mat? firstFrame)
+    {
+        if (firstFrame is not null && !firstFrame.Empty())
+        {
+            return GetConfiguredRecordingSize(firstFrame.Width, firstFrame.Height);
+        }
+
+        if (_preBuffer.Count > 0)
+        {
+            var frame = _preBuffer.Last().Frame;
+            return GetConfiguredRecordingSize(frame.Width, frame.Height);
+        }
+
+        return new OpenCvSharp.Size(MakeEven(_settings.Camera.ActiveWidth), MakeEven(_settings.Camera.ActiveHeight));
+    }
+
+    private OpenCvSharp.Size GetConfiguredRecordingSize(int frameWidth, int frameHeight)
+    {
+        var targetWidth = Math.Max(2, _settings.Camera.ActiveWidth);
+        var targetHeight = Math.Max(2, _settings.Camera.ActiveHeight);
+        var frameAspect = frameWidth / (double)Math.Max(1, frameHeight);
+        var targetAspect = targetWidth / (double)Math.Max(1, targetHeight);
+        if (Math.Abs(frameAspect - targetAspect) / targetAspect < 0.01)
+        {
+            return new OpenCvSharp.Size(MakeEven(targetWidth), MakeEven(targetHeight));
+        }
+
+        if (frameAspect > targetAspect)
+        {
+            targetHeight = (int)Math.Round(targetWidth / frameAspect);
+        }
+        else
+        {
+            targetWidth = (int)Math.Round(targetHeight * frameAspect);
+        }
+
+        return new OpenCvSharp.Size(MakeEven(targetWidth), MakeEven(targetHeight));
+    }
+
+    private static int MakeEven(int value)
+    {
+        value = Math.Max(2, value);
+        return value % 2 == 0 ? value : value - 1;
+    }
+
+    private string CreateUniqueRecordingPrefix(DateTime startTime)
+    {
+        var recordingFolder = GetRecordingFolder(startTime);
+        var basePrefix = $"{startTime:yyyyMMdd_HHmmss}";
+        var prefix = basePrefix;
+        var index = 1;
+        while (File.Exists(Path.Combine(recordingFolder, $"{prefix}.mp4"))
+            || File.Exists(Path.Combine(recordingFolder, $"{prefix}.recording.mp4"))
+            || File.Exists(Path.Combine(recordingFolder, $"{prefix}.crashed.mp4")))
+        {
+            prefix = $"{basePrefix}_{index:000}";
+            index++;
+        }
+
+        return prefix;
+    }
+
+    private string GetRecordingFolder(DateTime timestamp)
+    {
+        return Path.Combine(
+            _paths.RecVideos,
+            timestamp.ToString("yyyy"),
+            timestamp.ToString("MM"),
+            timestamp.ToString("dd"));
+    }
+
+    private void ClearPreBufferUnsafe()
+    {
+        while (_preBuffer.Count > 0)
+        {
+            DisposeBufferedFrame(_preBuffer.Dequeue());
+        }
+    }
+
+    private void DisposeBufferedFrame(BufferedFrame bufferedFrame)
+    {
+        _preBufferBytes = Math.Max(0, _preBufferBytes - bufferedFrame.SizeBytes);
+        bufferedFrame.Frame.Dispose();
+    }
+
+    private static long EstimateMatBytes(Mat frame)
+    {
+        try
+        {
+            return checked((long)frame.Total() * frame.ElemSize());
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_sync)
+        {
+            _writer?.Dispose();
+            _writer = null;
+            _lastWrittenFrame?.Dispose();
+            _lastWrittenFrame = null;
+            ClearPreBufferUnsafe();
+        }
+    }
+}
