@@ -1,6 +1,9 @@
 using DFBlackbox.Models;
 using DFBlackbox.Utils;
 using OpenCvSharp;
+using System.Diagnostics;
+using System.Reflection;
+using System.Text;
 
 namespace DFBlackbox.Core;
 
@@ -12,7 +15,7 @@ public sealed class RecordingService : IDisposable
     private readonly AppPaths _paths;
     private readonly Queue<BufferedFrame> _preBuffer = new();
     private readonly object _sync = new();
-    private VideoWriter? _writer;
+    private FfmpegRecordingWriter? _writer;
     private OpenCvSharp.Size _writerSize;
     private string _activeRecordingPath = "";
     private string _activeFinalPath = "";
@@ -87,15 +90,7 @@ public sealed class RecordingService : IDisposable
             _activeFinalPath = Path.Combine(recordingFolder, $"{prefix}.mp4");
 
             var size = GetRecordingSize(firstFrame);
-            var fourcc = VideoWriter.FourCC('m', 'p', '4', 'v');
-            _writer = new VideoWriter(_activeRecordingPath, fourcc, _recordingFps, size);
-            if (!_writer.IsOpened())
-            {
-                _writer.Dispose();
-                _writer = null;
-                throw new InvalidOperationException("VideoWriter could not open the recording file.");
-            }
-
+            _writer = FfmpegRecordingWriter.Start(_activeRecordingPath, _recordingFps, size, GetRecordingBitrateKbps());
             _writerSize = size;
             foreach (var bufferedFrame in _preBuffer)
             {
@@ -128,8 +123,7 @@ public sealed class RecordingService : IDisposable
                 return "";
             }
 
-            _writer.Release();
-            _writer.Dispose();
+            _writer.Close();
             _writer = null;
             _writerSize = default;
             _nextFrameDue = DateTime.MinValue;
@@ -226,6 +220,16 @@ public sealed class RecordingService : IDisposable
     private int GetRecordingFps()
     {
         return Math.Clamp(_settings.Camera.ActiveFps, 1, 60);
+    }
+
+    private int GetRecordingBitrateKbps()
+    {
+        return _settings.Recording.VideoBitrateKbps switch
+        {
+            320 => 320,
+            2500 => 2500,
+            _ => 800
+        };
     }
 
     private OpenCvSharp.Size GetRecordingSize(Mat? firstFrame)
@@ -334,6 +338,219 @@ public sealed class RecordingService : IDisposable
             _lastWrittenFrame?.Dispose();
             _lastWrittenFrame = null;
             ClearPreBufferUnsafe();
+        }
+    }
+
+    private sealed class FfmpegRecordingWriter : IDisposable
+    {
+        private const string FfmpegResourceName = "DFBlackbox.ffmpeg.exe";
+        private readonly Process _process;
+        private readonly StringBuilder _errorOutput = new();
+        private bool _closed;
+
+        private FfmpegRecordingWriter(Process process)
+        {
+            _process = process;
+            _process.ErrorDataReceived += (_, e) =>
+            {
+                if (!string.IsNullOrWhiteSpace(e.Data))
+                {
+                    _errorOutput.AppendLine(e.Data);
+                }
+            };
+            _process.BeginErrorReadLine();
+        }
+
+        public static FfmpegRecordingWriter Start(string outputPath, int fps, OpenCvSharp.Size size, int bitrateKbps)
+        {
+            var ffmpegPath = ResolveFfmpegPath();
+            if (ffmpegPath is null)
+            {
+                throw new InvalidOperationException("정확한 녹화 비트 전송률을 사용하려면 ffmpeg.exe가 필요합니다. 앱에 포함된 FFmpeg를 찾지 못했습니다.");
+            }
+
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = ffmpegPath,
+                    Arguments = string.Join(" ", new[]
+                    {
+                        "-hide_banner",
+                        "-loglevel error",
+                        "-y",
+                        "-f image2pipe",
+                        $"-framerate {fps}",
+                        "-vcodec bmp",
+                        "-i pipe:0",
+                        "-an",
+                        "-c:v libx264",
+                        "-pix_fmt yuv420p",
+                        $"-b:v {bitrateKbps}k",
+                        $"-maxrate {bitrateKbps}k",
+                        $"-bufsize {bitrateKbps * 2}k",
+                        "-movflags +faststart",
+                        Quote(outputPath)
+                    }),
+                    UseShellExecute = false,
+                    RedirectStandardInput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                },
+                EnableRaisingEvents = true
+            };
+
+            if (!process.Start())
+            {
+                process.Dispose();
+                throw new InvalidOperationException("FFmpeg 녹화 프로세스를 시작하지 못했습니다.");
+            }
+
+            return new FfmpegRecordingWriter(process);
+        }
+
+        public void Write(Mat frame)
+        {
+            if (_closed)
+            {
+                return;
+            }
+
+            try
+            {
+                Cv2.ImEncode(".bmp", frame, out var bytes);
+                _process.StandardInput.BaseStream.Write(bytes, 0, bytes.Length);
+                _process.StandardInput.BaseStream.Flush();
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"FFmpeg 녹화 프레임 쓰기에 실패했습니다. {ex.Message}", ex);
+            }
+        }
+
+        public void Close()
+        {
+            if (_closed)
+            {
+                return;
+            }
+
+            _closed = true;
+            try
+            {
+                _process.StandardInput.Close();
+            }
+            catch
+            {
+            }
+
+            if (!_process.WaitForExit(10000))
+            {
+                try
+                {
+                    _process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                }
+
+                throw new InvalidOperationException("FFmpeg 녹화 프로세스가 정상 종료되지 않았습니다.");
+            }
+
+            if (_process.ExitCode != 0)
+            {
+                var detail = _errorOutput.ToString().Trim();
+                throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail)
+                    ? $"FFmpeg 녹화 프로세스가 오류 코드 {_process.ExitCode}로 종료되었습니다."
+                    : $"FFmpeg 녹화 프로세스가 오류 코드 {_process.ExitCode}로 종료되었습니다.\n{detail}");
+            }
+        }
+
+        public void Dispose()
+        {
+            try
+            {
+                Close();
+            }
+            catch
+            {
+                try
+                {
+                    if (!_process.HasExited)
+                    {
+                        _process.Kill(entireProcessTree: true);
+                    }
+                }
+                catch
+                {
+                }
+            }
+            finally
+            {
+                _process.Dispose();
+            }
+        }
+
+        private static string? ResolveFfmpegPath()
+        {
+            var local = Path.Combine(AppContext.BaseDirectory, "ffmpeg.exe");
+            if (File.Exists(local))
+            {
+                return local;
+            }
+
+            var pathVariable = Environment.GetEnvironmentVariable("PATH") ?? "";
+            foreach (var path in pathVariable.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var candidate = Path.Combine(path.Trim(), "ffmpeg.exe");
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return ExtractBundledFfmpeg();
+        }
+
+        private static string? ExtractBundledFfmpeg()
+        {
+            var assembly = Assembly.GetExecutingAssembly();
+            using var resource = assembly.GetManifestResourceStream(FfmpegResourceName);
+            if (resource is null)
+            {
+                return null;
+            }
+
+            var toolsFolder = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DFBlackbox",
+                "tools");
+            Directory.CreateDirectory(toolsFolder);
+
+            var outputPath = Path.Combine(toolsFolder, "ffmpeg.exe");
+            if (File.Exists(outputPath) && new FileInfo(outputPath).Length == resource.Length)
+            {
+                return outputPath;
+            }
+
+            var tempPath = outputPath + ".tmp";
+            using (var file = File.Create(tempPath))
+            {
+                resource.CopyTo(file);
+            }
+
+            if (File.Exists(outputPath))
+            {
+                File.Delete(outputPath);
+            }
+
+            File.Move(tempPath, outputPath);
+            return outputPath;
+        }
+
+        private static string Quote(string value)
+        {
+            return "\"" + value.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
         }
     }
 }

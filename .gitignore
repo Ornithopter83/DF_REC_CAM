@@ -2,6 +2,7 @@
 bin/
 obj/
 .buildcheck/
+.publishcheck/
 publish/
 DFBlackbox/bin/
 DFBlackbox/obj/
@@ -21,6 +22,9 @@ REC/
 Logs/
 events.jsonl
 *.recording.mp4
+
+# Large local distribution dependency; embedded during publish when present.
+ffmpeg.exe
 
 # Logs and temporary files
 *.log

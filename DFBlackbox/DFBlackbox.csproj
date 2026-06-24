@@ -24,4 +24,8 @@
     <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.10.0.20241108" />
   </ItemGroup>
 
+  <ItemGroup Condition="Exists('..\ffmpeg.exe')">
+    <EmbeddedResource Include="..\ffmpeg.exe" LogicalName="DFBlackbox.ffmpeg.exe" />
+  </ItemGroup>
+
 </Project>

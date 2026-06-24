@@ -71,6 +71,7 @@ public sealed partial class MainForm : Form
     private bool _updatingPlaybackTimeline;
     private bool _cameraListRefreshInProgress;
     private bool _applyingSettingsToUi;
+    private const double OverlayReferenceHeight = 1080.0;
 
     private enum RoiEditMode
     {
@@ -1164,19 +1165,21 @@ public sealed partial class MainForm : Form
 
     private Mat DrawOverlay(Mat frame, DetectionResult result, StateUpdateResult? stateResult = null)
     {
-        var output = frame.Clone();
+        var sourceWidth = Math.Max(1, frame.Width);
+        var sourceHeight = Math.Max(1, frame.Height);
+        var output = CreateOverlayCanvas(frame);
         DrawPrivacyMasks(output);
         if (_settings.Overlay.ShowRodRoi && (!_isPlaybackMode || _settings.Overlay.ShowPlaybackRoiOutlines))
         {
             DrawRoi(output, ScaleRoiForFrame(_settings.Rois.PersonWatchRoi, output), Scalar.Yellow, "ROI", 2);
-            DrawRoi(output, ScaleRoiForFrame(_settings.Rois.IgnoreRoi, output), new Scalar(180, 180, 180), "IGNORE_ROI", 3);
+            DrawRoi(output, ScaleRoiForFrame(_settings.Rois.IgnoreRoi, output), new Scalar(180, 180, 180), "IGNORE_ROI", 2);
         }
 
         if (_settings.Overlay.ShowMotionMask)
         {
             foreach (var box in result.MotionBoxes)
             {
-                Cv2.Rectangle(output, ToCvRect(box), Scalar.Orange, 2);
+                Cv2.Rectangle(output, ToCvRect(ScaleRectToOverlay(box, sourceWidth, sourceHeight, output)), Scalar.Orange, OverlayThickness(output, 2));
             }
         }
 
@@ -1184,18 +1187,18 @@ public sealed partial class MainForm : Form
         {
             foreach (var box in result.PersonCandidateBoxes)
             {
-                Cv2.Rectangle(output, ToCvRect(box), Scalar.Blue, 2);
+                Cv2.Rectangle(output, ToCvRect(ScaleRectToOverlay(box, sourceWidth, sourceHeight, output)), Scalar.Blue, OverlayThickness(output, 2));
             }
         }
 
         if (_recordingService.IsRecording && _settings.Overlay.ShowRecordingStatus)
         {
-            Cv2.PutText(output, "REC", new OpenCvSharp.Point(24, 42), HersheyFonts.HersheySimplex, 1.2, Scalar.Red, 3);
+            Cv2.PutText(output, "REC", OverlayPoint(output, 24, 42), HersheyFonts.HersheySimplex, OverlayFontScale(output, 1.2), Scalar.Red, OverlayThickness(output, 3));
         }
 
         if ((_isPlaybackMode && _settings.Overlay.ShowPlaybackTrackingCandidate) || (!_isPlaybackMode && _recordingService.IsRecording))
         {
-            DrawTrackingCandidateOverlay(output, result);
+            DrawTrackingCandidateOverlay(output, result, sourceWidth, sourceHeight);
         }
 
         if (_isPlaybackMode && _settings.Overlay.ShowPlaybackDiffMessage)
@@ -1210,7 +1213,7 @@ public sealed partial class MainForm : Form
 
         if (_settings.Overlay.ShowDebugText)
         {
-            Cv2.PutText(output, $"{_stateMachine.CurrentState} {result.DebugText}", new OpenCvSharp.Point(24, output.Height - 24), HersheyFonts.HersheySimplex, 0.6, Scalar.White, 2);
+            Cv2.PutText(output, $"{_stateMachine.CurrentState} {result.DebugText}", OverlayBottomLeftPoint(output, 24, 24), HersheyFonts.HersheySimplex, OverlayFontScale(output, 0.6), Scalar.White, OverlayThickness(output, 2));
         }
 
         return output;
@@ -1221,43 +1224,52 @@ public sealed partial class MainForm : Form
         var reason = string.IsNullOrWhiteSpace(stateResult.RecordingHoldReason)
             ? "KEEP: unknown"
             : stateResult.RecordingHoldReason;
-        var y = Math.Max(64, output.Height - 64);
-        Cv2.Rectangle(output, new OpenCvSharp.Rect(18, y - 34, Math.Min(output.Width - 36, 760), 44), Scalar.Black, -1);
-        Cv2.PutText(output, reason, new OpenCvSharp.Point(28, y), HersheyFonts.HersheySimplex, 0.8, Scalar.Cyan, 2);
+        var scale = OverlayScale(output);
+        var y = Math.Max(ScaleOverlayLength(64, scale), output.Height - ScaleOverlayLength(64, scale));
+        Cv2.Rectangle(output, new OpenCvSharp.Rect(
+            ScaleOverlayLength(18, scale),
+            y - ScaleOverlayLength(34, scale),
+            Math.Min(output.Width - ScaleOverlayLength(36, scale), ScaleOverlayLength(760, scale)),
+            ScaleOverlayLength(44, scale)), Scalar.Black, -1);
+        Cv2.PutText(output, reason, new OpenCvSharp.Point(ScaleOverlayLength(28, scale), y), HersheyFonts.HersheySimplex, OverlayFontScale(output, 0.8), Scalar.Cyan, OverlayThickness(output, 2));
     }
 
     private void DrawPlaybackDiffOverlay(Mat output, DetectionResult result)
     {
         var text = $"ROI_Diff {result.PersonMotionScore:0.000} / th {_settings.Detection.PersonMotionRatioThreshold:0.000}";
-        var y = Math.Max(64, output.Height - 64);
-        Cv2.Rectangle(output, new OpenCvSharp.Rect(18, y - 34, Math.Min(output.Width - 36, 520), 44), Scalar.Black, -1);
-        Cv2.PutText(output, text, new OpenCvSharp.Point(28, y), HersheyFonts.HersheySimplex, 0.8, Scalar.Cyan, 2);
+        var scale = OverlayScale(output);
+        var y = Math.Max(ScaleOverlayLength(64, scale), output.Height - ScaleOverlayLength(64, scale));
+        Cv2.Rectangle(output, new OpenCvSharp.Rect(
+            ScaleOverlayLength(18, scale),
+            y - ScaleOverlayLength(34, scale),
+            Math.Min(output.Width - ScaleOverlayLength(36, scale), ScaleOverlayLength(520, scale)),
+            ScaleOverlayLength(44, scale)), Scalar.Black, -1);
+        Cv2.PutText(output, text, new OpenCvSharp.Point(ScaleOverlayLength(28, scale), y), HersheyFonts.HersheySimplex, OverlayFontScale(output, 0.8), Scalar.Cyan, OverlayThickness(output, 2));
     }
 
-    private void DrawTrackingCandidateOverlay(Mat output, DetectionResult result)
+    private void DrawTrackingCandidateOverlay(Mat output, DetectionResult result, int sourceWidth, int sourceHeight)
     {
-        var candidate = FindLargestRecordingHoldCandidate(result);
+        var candidate = FindLargestRecordingHoldCandidate(result, sourceWidth, sourceHeight);
         if (candidate.HasValue)
         {
+            var overlayCandidate = ScaleRectToOverlay(candidate.Value, sourceWidth, sourceHeight, output);
             var candidateColor = result.PersonMotionScore >= _settings.Detection.PersonMotionRatioThreshold
                 ? Scalar.Red
                 : Scalar.Cyan;
-            Cv2.Rectangle(output, ToCvRect(candidate.Value), candidateColor, 4);
+            Cv2.Rectangle(output, ToCvRect(overlayCandidate), candidateColor, OverlayThickness(output, 4));
             Cv2.PutText(
                 output,
                 "KEEP CANDIDATE",
-                new OpenCvSharp.Point(candidate.Value.X + 6, Math.Max(22, candidate.Value.Y - 8)),
+                new OpenCvSharp.Point(overlayCandidate.X + OverlayLength(output, 6), Math.Max(OverlayLength(output, 22), overlayCandidate.Y - OverlayLength(output, 8))),
                 HersheyFonts.HersheySimplex,
-                0.7,
+                OverlayFontScale(output, 0.7),
                 candidateColor,
-                2);
+                OverlayThickness(output, 2));
         }
     }
 
-    private Rectangle? FindLargestRecordingHoldCandidate(DetectionResult result)
+    private Rectangle? FindLargestRecordingHoldCandidate(DetectionResult result, int frameWidth, int frameHeight)
     {
-        var frameWidth = _latestFrame?.Width ?? _settings.Camera.ActiveWidth;
-        var frameHeight = _latestFrame?.Height ?? _settings.Camera.ActiveHeight;
         var mainRoi = DetectionService.ScaleRoiToFrame(_settings.Rois.PersonWatchRoi, _settings, frameWidth, frameHeight).ToRectangle();
         return result.MotionBoxes
             .Where(box => box.IntersectsWith(mainRoi))
@@ -1319,7 +1331,8 @@ public sealed partial class MainForm : Form
         }
 
         _fpsCounter.Tick();
-        var bitmap = BitmapConverter.ToBitmap(preview);
+        using var displayPreview = CreateOverlayCanvas(preview);
+        var bitmap = BitmapConverter.ToBitmap(displayPreview);
         DrawActiveRecordingStamp(bitmap);
         DrawRecordingStamp(bitmap);
         if (IsDisposed || !IsHandleCreated)
@@ -2194,14 +2207,17 @@ public sealed partial class MainForm : Form
         }
 
         using var graphics = Graphics.FromImage(bitmap);
-        using var font = new Font("Malgun Gothic", 18F, FontStyle.Bold);
-        var padding = 12;
+        var scale = OverlayScale(bitmap.Width, bitmap.Height);
+        using var font = new Font("Malgun Gothic", OverlayFontSize(18F, scale), FontStyle.Bold);
+        var padding = ScaleOverlayLength(12, scale);
+        var margin = ScaleOverlayLength(18, scale);
         var textSize = graphics.MeasureString(_recordingStampText, font);
-        var rect = new RectangleF(18, 18, textSize.Width + padding * 2, textSize.Height + padding);
+        var rect = new RectangleF(margin, margin, textSize.Width + padding * 2, textSize.Height + padding);
         using var background = new SolidBrush(Color.FromArgb(220, _recordingStampBackColor));
         using var foreground = new SolidBrush(Color.White);
         graphics.FillRectangle(background, rect);
-        graphics.DrawRectangle(Pens.White, Rectangle.Round(rect));
+        using var border = new Pen(Color.White, OverlayPenWidth(scale));
+        graphics.DrawRectangle(border, Rectangle.Round(rect));
         graphics.DrawString(_recordingStampText, font, foreground, rect.X + padding, rect.Y + padding / 2f);
     }
 
@@ -2220,14 +2236,17 @@ public sealed partial class MainForm : Form
 
         const string text = "REC";
         using var graphics = Graphics.FromImage(bitmap);
-        using var font = new Font("Malgun Gothic", 20F, FontStyle.Bold);
-        var padding = 12;
+        var scale = OverlayScale(bitmap.Width, bitmap.Height);
+        using var font = new Font("Malgun Gothic", OverlayFontSize(20F, scale), FontStyle.Bold);
+        var padding = ScaleOverlayLength(12, scale);
+        var margin = ScaleOverlayLength(18, scale);
         var textSize = graphics.MeasureString(text, font);
-        var rect = new RectangleF(bitmap.Width - textSize.Width - padding * 2 - 18, 18, textSize.Width + padding * 2, textSize.Height + padding);
+        var rect = new RectangleF(bitmap.Width - textSize.Width - padding * 2 - margin, margin, textSize.Width + padding * 2, textSize.Height + padding);
         using var background = new SolidBrush(Color.FromArgb(230, 190, 24, 32));
         using var foreground = new SolidBrush(Color.White);
         graphics.FillRectangle(background, rect);
-        graphics.DrawRectangle(Pens.White, Rectangle.Round(rect));
+        using var border = new Pen(Color.White, OverlayPenWidth(scale));
+        graphics.DrawRectangle(border, Rectangle.Round(rect));
         graphics.DrawString(text, font, foreground, rect.X + padding, rect.Y + padding / 2f);
     }
 
@@ -2472,15 +2491,23 @@ public sealed partial class MainForm : Form
     {
         foreach (var roi in _settings.Rois.IgnoreRois)
         {
-            Cv2.Rectangle(output, ToCvRect(roi.ToRectangle()), Scalar.Black, -1);
+            Cv2.Rectangle(output, ToCvRect(ScaleRoiForFrame(roi, output).ToRectangle()), Scalar.Black, -1);
         }
     }
 
     private static void DrawRoi(Mat output, RoiRect roi, Scalar color, string label, int thickness)
     {
         var rect = ToCvRect(roi.ToRectangle());
-        Cv2.Rectangle(output, rect, color, thickness);
-        Cv2.PutText(output, label, new OpenCvSharp.Point(rect.X + 4, Math.Max(18, rect.Y - 6)), HersheyFonts.HersheySimplex, 0.55, color, 2);
+        var lineThickness = OverlayThickness(output, thickness);
+        Cv2.Rectangle(output, rect, color, lineThickness);
+        Cv2.PutText(
+            output,
+            label,
+            new OpenCvSharp.Point(rect.X + OverlayLength(output, 4), Math.Max(OverlayLength(output, 18), rect.Y - OverlayLength(output, 6))),
+            HersheyFonts.HersheySimplex,
+            OverlayFontScale(output, 0.55),
+            color,
+            lineThickness);
         DrawRoiHandle(output, rect.X, rect.Y, color);
         DrawRoiHandle(output, rect.X + rect.Width / 2, rect.Y, color);
         DrawRoiHandle(output, rect.X + rect.Width, rect.Y, color);
@@ -2493,7 +2520,7 @@ public sealed partial class MainForm : Form
 
     private static void DrawRoiHandle(Mat output, int x, int y, Scalar color)
     {
-        const int half = 5;
+        var half = OverlayLength(output, 5);
         var left = Math.Clamp(x - half, 0, Math.Max(0, output.Width - 1));
         var top = Math.Clamp(y - half, 0, Math.Max(0, output.Height - 1));
         var right = Math.Clamp(x + half, 0, Math.Max(0, output.Width - 1));
@@ -2502,4 +2529,86 @@ public sealed partial class MainForm : Form
     }
 
     private static OpenCvSharp.Rect ToCvRect(Rectangle rect) => new(rect.X, rect.Y, rect.Width, rect.Height);
+
+    private static Mat CreateOverlayCanvas(Mat frame)
+    {
+        var targetHeight = (int)OverlayReferenceHeight;
+        var targetWidth = Math.Max(2, (int)Math.Round(frame.Width * (targetHeight / (double)Math.Max(1, frame.Height))));
+        if (targetWidth % 2 != 0)
+        {
+            targetWidth++;
+        }
+
+        if (frame.Width == targetWidth && frame.Height == targetHeight)
+        {
+            return frame.Clone();
+        }
+
+        var output = new Mat();
+        Cv2.Resize(frame, output, new OpenCvSharp.Size(targetWidth, targetHeight), 0, 0, InterpolationFlags.Linear);
+        return output;
+    }
+
+    private static Rectangle ScaleRectToOverlay(Rectangle rect, int sourceWidth, int sourceHeight, Mat overlay)
+    {
+        var scaleX = overlay.Width / (double)Math.Max(1, sourceWidth);
+        var scaleY = overlay.Height / (double)Math.Max(1, sourceHeight);
+        var x = (int)Math.Round(rect.X * scaleX);
+        var y = (int)Math.Round(rect.Y * scaleY);
+        var width = Math.Max(1, (int)Math.Round(rect.Width * scaleX));
+        var height = Math.Max(1, (int)Math.Round(rect.Height * scaleY));
+        return new Rectangle(x, y, width, height);
+    }
+
+    private static int OverlayLength(Mat frame, int value)
+    {
+        return value;
+    }
+
+    private static int OverlayThickness(Mat frame, int value)
+    {
+        return Math.Max(1, value);
+    }
+
+    private static double OverlayFontScale(Mat frame, double value)
+    {
+        return value;
+    }
+
+    private static OpenCvSharp.Point OverlayPoint(Mat frame, int x, int y)
+    {
+        var scale = OverlayScale(frame);
+        return new OpenCvSharp.Point(ScaleOverlayLength(x, scale), ScaleOverlayLength(y, scale));
+    }
+
+    private static OpenCvSharp.Point OverlayBottomLeftPoint(Mat frame, int x, int bottomMargin)
+    {
+        var scale = OverlayScale(frame);
+        return new OpenCvSharp.Point(ScaleOverlayLength(x, scale), frame.Height - ScaleOverlayLength(bottomMargin, scale));
+    }
+
+    private static double OverlayScale(Mat frame)
+    {
+        return 1.0;
+    }
+
+    private static double OverlayScale(int width, int height)
+    {
+        return 1.0;
+    }
+
+    private static int ScaleOverlayLength(int value, double scale)
+    {
+        return Math.Max(1, value);
+    }
+
+    private static float OverlayFontSize(float points, double scale)
+    {
+        return Math.Max(1F, points);
+    }
+
+    private static float OverlayPenWidth(double scale)
+    {
+        return 2F;
+    }
 }

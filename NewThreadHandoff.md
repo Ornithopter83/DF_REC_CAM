@@ -1,134 +1,137 @@
-# DFBlackbox New Thread Handoff
+# DFBlackbox 새 스레드 인수인계
 
-## Project
+## 프로젝트
 
-- Solution/project name: `DFBlackbox`
-- Workspace: `C:\Projects\VS\DFBlackbox`
-- App type: .NET 8 Windows Forms
-- Primary form: `DFBlackbox/Forms/MainForm.cs`
-- GitHub remote: `https://github.com/Ornithopter83/DF_REC_CAM.git`
-- Current branch: `main`
-- Latest pushed commit at handoff: `11e7c42 Improve playback controls and camera mode flow`
+- 솔루션/프로젝트 이름: `DFBlackbox`
+- 작업 폴더: `C:\Projects\VS\DFBlackbox`
+- 앱 유형: .NET 8 Windows Forms
+- 주 폼: `DFBlackbox/Forms/MainForm.cs`
+- GitHub 원격 저장소: `https://github.com/Ornithopter83/DF_REC_CAM.git`
+- 현재 브랜치: `main`
+- 최근 로컬 커밋: `d2544f8 ONVIF 카메라 검색과 한글 UI 적용`
 
-## First Task For Next Thread
+## 최근 완료 작업
 
-Implement ONVIF camera discovery and RTSP settings update.
+- `SettingsForm`에 `카메라 찾기` 버튼과 ONVIF 검색 결과 콤보박스를 추가했다.
+- WS-Discovery UDP multicast와 ONVIF SOAP 호출을 직접 구현했다.
+  - 검색 주소: `239.255.255.250:3702`
+  - 장비 서비스 URL의 `XAddrs` 파싱
+  - `GetCapabilities`, `GetProfiles`, `GetStreamUri` 호출
+- 검색 결과는 자동 반영하지 않고, 사용자가 콤보박스에서 직접 카메라를 선택했을 때만 설정에 반영한다.
+- 검색 결과 콤보박스 상태 문구:
+  - `먼저 카메라 찾기 버튼을 누르세요`
+  - `카메라 탐색 중`
+  - `카메라 없음`
+  - `{N} 카메라 탐색`
+- 선택한 ONVIF 카메라 정보로 IP/HTTP 포트/RTSP 포트/수동 RTSP URL/스트림 경로/해상도를 갱신한다.
+- RTSP URI가 있으면 수동 RTSP URL을 우선 사용한다.
+- RTSP URI가 없으면 기존 스트림 경로 후보를 유지하면서 IP/포트만 채운다.
+- UI 전체를 1차 한글화했다.
+- Settings 폼 폭을 넓히고 메뉴를 가로 배치해서 `확인 / 적용 / 취소` 버튼이 보이기 쉽게 조정했다.
 
-Context:
+## 현재 작업 흐름
 
-- The camera's ONVIF access control has been disabled.
-- The user wants a `Find Camera` button for cameras on the same network.
-- When clicked, the app should discover ONVIF cameras, obtain camera information, and use that information to update the app's RTSP settings.
+- 메인 화면은 운용 중심 화면이다.
+- 세부 설정은 `SettingsForm`에서 관리한다.
+- 메인 오른쪽 패널에는 자주 쓰는 조작만 남겨 두었다.
+  - 연결 / 연결 해제
+  - 카메라 열기 / 카메라 닫기
+  - 영상 불러오기
+  - 차이 기준 저장
+  - 감시 시작
+  - 수동 / 자동 / 전체
+  - 녹화 시작 / 녹화 정지
+  - 저장소 / 설정
+  - 최근 이벤트
+  - 저장 / 기본값
+- 카메라 웹 설정 접근은 `SettingsForm`의 `웹 설정` 버튼에서 한다.
+- IP 카메라 ID/비밀번호 UI는 현재 제거되어 있다.
+  - 모델 필드는 호환성 때문에 남아 있지만 저장 시 빈 값으로 정리한다.
 
-Expected behavior:
+## 중요한 동작
 
-- Add a `Find Camera` button in `SettingsForm`, near the IP camera settings.
-- Discover ONVIF cameras on the local network.
-- Show or select discovered camera information:
-  - IP address
-  - HTTP/ONVIF port when available
-  - stream/profile information when available
-  - RTSP URI when available
-- Update existing settings from the selected discovery result:
-  - IP address
-  - HTTP port
-  - RTSP port or manual RTSP URL
-  - stream path/manual RTSP field
-- Prefer using an actual ONVIF media stream URI if available.
-- If ONVIF discovery finds the camera but cannot get a stream URI, fill IP/port and keep the user-editable stream path candidates.
-- Keep ID/password out of the UI for now because access control is disabled.
+- 앱은 한 번에 하나만 실행된다.
+  - `Program.cs`의 `Mutex("DFBlackbox.SingleInstance")`로 구현되어 있다.
+- 창을 닫으면 앱이 종료된다.
+- 창을 최소화하면 트레이로 이동한다.
+- 트레이 아이콘에서 앱을 열거나 종료할 수 있다.
+- 수동/자동 모드는 앱 시작 시 카메라를 자동 검색하지 않는다.
+- 수동/자동 모드는 `연결` 또는 `카메라 열기`를 눌렀을 때 카메라 검색/연결을 시작한다.
+- 전체 모드는 자동 검색/연결/열기/녹화 시작이 가능하다.
+- `감시 시작` 또는 녹화 시작 전에는 `카메라 열기`가 필요하다.
+- `차이 기준 저장`은 라이브 카메라 프리뷰에서 최근 프레임을 받은 뒤에만 활성화된다.
+- 영상 재생 중에도 `연결`과 `카메라 열기`는 활성 상태를 유지해서 카메라 모드로 전환할 수 있다.
+- `카메라 닫기`는 감시와 활성 녹화를 함께 정지한다.
+- 녹화 파일은 설정된 앱 데이터/녹화 루트 아래에 저장된다.
+- 로그는 설정된 로그 폴더에 저장된다.
 
-Implementation notes:
+## 재생
 
-- Search for an existing .NET ONVIF library first only if package/network access is acceptable.
-- If avoiding new dependencies, implement WS-Discovery probe over UDP multicast:
-  - multicast address: `239.255.255.250:3702`
-  - probe type usually includes `dn:NetworkVideoTransmitter`
-  - parse `XAddrs` from responses to find ONVIF service URLs.
-- After discovery, ONVIF `GetProfiles` + `GetStreamUri` can be implemented via SOAP.
-- Keep the first version pragmatic:
-  - discovery list + apply IP/URL is enough.
-  - full ONVIF profile browsing can be added afterward.
+- 기본 WinForms `TrackBar` 재생 UI를 `PlaybackControl`로 교체했다.
+- 재생 UI 구성:
+  - 둥근 진행 바
+  - 현재/전체 시간 라벨
+  - 원형 이전/재생/다음 버튼
+  - 버튼 안의 단축키 힌트: `[ - ]`, `[ / ]`, `[ + ]`
+- 재생 FPS 처리:
+  - 가능하면 MP4 `mvhd` duration을 직접 읽는다.
+  - 평균 FPS는 `프레임 수 / duration 초`로 계산한다.
+  - OpenCV `POS_MSEC`와 메타데이터 FPS는 보조 fallback이다.
+- 재생은 WinForms `Timer`를 사용하지 않는다.
+  - `Stopwatch` 기반 async loop를 사용한다.
+  - 일반 재생은 `Read()`로 순차 프레임을 읽는다.
+  - 랜덤 seek는 사용자 seek/step/redraw 때만 사용한다.
+  - 재생 프리뷰는 UI 스레드에 즉시 반영된다.
 
-## Current State
+## 감지
 
-- The main window is an operation-focused screen.
-- Camera/detail configuration lives in `SettingsForm`.
-- The main right panel keeps only frequent controls:
-  - `Connect / Disconnect`
-  - `Open Camera / Close Camera`
-  - `Load Video`
-  - `Save Diff Base`
-  - `Start Watch`
-  - `Manual / Auto / Full`
-  - `Start Rec / Stop Rec`
-  - `Storage / Settings`
-  - `Recent Events`
-  - `SAVE / Defaults`
-- `Test / Web / Copy` were removed from the main operation panel.
-- Camera website access now lives in `SettingsForm` as a `Website` button beside `Use manual RTSP URL`.
-- IP camera username/password UI was removed again after ONVIF/RTSP access control was disabled.
-  - Model fields still exist for compatibility, but app code clears them when settings are saved.
+- 주 트리거는 `ROI_Diff`이다.
+- 기준 이미지는 `차이 기준 저장`으로 저장한다.
+- `ROI / 제외 ROI`와 `디버그 텍스트`는 설정 적용 한 번으로 반영된다.
+- 재생 오버레이는 메인 오버레이 설정을 따르고, 설정 변경 후 현재 프레임을 다시 그린다.
+- 녹화 출력은 오버레이 그래픽이 입혀지지 않은 원본 프레임을 MP4로 저장한다.
 
-## Important Behavior
+## 최근 추가 작업
 
-- Only one app instance can run.
-  - Implemented with `Mutex("DFBlackbox.SingleInstance")` in `Program.cs`.
-- Closing the window exits the app.
-- Minimizing the window sends it to the tray.
-- Tray icon can restore or close the app.
-- Manual/Auto modes do not auto-discover cameras on startup.
-- Manual/Auto start camera discovery only when `Connect` or `Open Camera` is clicked.
-- Full mode can auto-discover/connect/open/start recording.
-- `Open Camera` is required before `Start Watch` or recording can start.
-- `Save Diff Base` is enabled only after a live camera preview has received a recent frame.
-- During video playback, `Connect` and `Open Camera` remain enabled so the user can switch back to camera mode.
-- `Close Camera` stops watching and stops active recording.
-- Recording files are stored under the configured app data/recording root.
-- Logs are stored under the configured logs folder.
+- 녹화 해상도 옵션에 `320x240`을 추가했다.
+- `SettingsForm`의 녹화 섹션에 `녹화 비트 전송률` 설정을 추가했다.
+  - 낮음: `320 kbps`
+  - 보통: `800 kbps`
+  - 높음: `2.5 Mbps`
+- 정확한 비트 전송률 적용을 위해 녹화 저장 경로를 FFmpeg 기반으로 변경했다.
+  - 앱 실행 폴더의 `ffmpeg.exe`, PATH의 `ffmpeg.exe`, 또는 앱에 임베드된 FFmpeg 리소스를 찾는다.
+  - 임베드된 리소스가 있으면 `%LOCALAPPDATA%\DFBlackbox\tools\ffmpeg.exe`로 추출해서 사용한다.
+  - 모두 없으면 녹화 시작 시 명확한 오류를 표시한다.
+  - 프레임은 BMP image pipe로 FFmpeg에 전달한다.
+  - 출력은 `libx264`, `yuv420p`, 지정 비트 전송률의 MP4로 저장한다.
+- 솔루션 루트에 `ffmpeg.exe`가 있으면 게시 시 단일 `DFBlackbox.exe` 안에 임베드된다.
+  - `ffmpeg.exe`는 100MB를 초과하므로 일반 Git 커밋에는 넣지 않는다.
+  - `.gitignore`에서 `ffmpeg.exe`와 `.publishcheck/`를 제외했다.
+  - 로컬 확인 게시 명령: `dotnet publish DFBlackbox\DFBlackbox.csproj -c Release -o .publishcheck`
+  - 확인 결과 `.publishcheck\DFBlackbox.exe` 단일 파일이 생성되었다.
 
-## Playback
+## 다음 작업 후보
 
-- Default WinForms `TrackBar` playback UI was replaced with `PlaybackControl`.
-- Playback UI includes:
-  - rounded progress bar
-  - current/total time labels
-  - circular previous/play-next buttons
-  - shortcut hints inside buttons: `[ - ]`, `[ / ]`, `[ + ]`
-- Playback FPS handling:
-  - MP4 `mvhd` duration is read directly when possible.
-  - Average FPS is calculated as `frame count / duration seconds`.
-  - OpenCV `POS_MSEC` and metadata FPS are fallbacks.
-- Playback no longer uses WinForms `Timer`.
-  - Uses a `Stopwatch`-scheduled async loop.
-  - Normal playback reads frames sequentially with `Read()`.
-  - Random seek is used only for user seek/step/redraw operations.
-  - Playback preview applies immediately on the UI thread.
+- 실제 카메라 환경에서 320/800/2500 kbps 녹화 파일의 화질과 파일 크기 확인.
+- 필요하면 비트 전송률 단계 이름이나 값을 조정.
 
-## Detection
-
-- Main trigger is `ROI_Diff`.
-- Baseline is captured with `Save Diff Base`.
-- `ROI / Ignore ROI` and `Debug Text` apply correctly with one Settings apply.
-- Playback overlays respect main overlay settings and redraw the current frame after changes.
-- Recording output remains clean source frames without overlay graphics burned into MP4 files.
-
-## Recent Build
+## 최근 빌드
 
 ```text
 dotnet build DFBlackbox\DFBlackbox.csproj -o .buildcheck
-Result: success
-Warnings: 0
-Errors: 0
+결과: 성공
+경고: 0
+오류: 0
 ```
 
-## Recent Git
+## 최근 Git
 
 ```text
 git status --short --branch
-Result: clean, main tracks origin/main
+커밋 직후 기준: clean, main tracks origin/main
 
-git log --oneline -2
+git log --oneline -3
+d2544f8 ONVIF 카메라 검색과 한글 UI 적용
 11e7c42 Improve playback controls and camera mode flow
 3059c3d Initial DFBlackbox project import
 ```

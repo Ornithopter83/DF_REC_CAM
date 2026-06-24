@@ -248,7 +248,7 @@ partial class MainForm
 
         cmbCameraList.DropDownStyle = ComboBoxStyle.DropDownList;
         cmbResolution.DropDownStyle = ComboBoxStyle.DropDownList;
-        cmbResolution.Items.AddRange(new object[] { "640x480", "800x600", "1280x720", "1920x1080" });
+        cmbResolution.Items.AddRange(new object[] { "320x240", "640x480", "800x600", "1280x720", "1920x1080" });
         cmbFps.DropDownStyle = ComboBoxStyle.DropDownList;
         cmbFps.Items.AddRange(new object[] { "60", "30", "15", "10", "5" });
 

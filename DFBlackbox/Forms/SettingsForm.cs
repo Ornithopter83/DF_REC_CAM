@@ -52,6 +52,7 @@ public sealed class SettingsForm : Form
     private readonly CheckBox _chkShowPlaybackDiffMessage = new() { Text = "재생 차이 메시지", AutoSize = true };
     private readonly CheckBox _chkShowPlaybackTrackingCandidate = new() { Text = "재생 추적 후보", AutoSize = true };
     private readonly NumericUpDown _numFullIntervalMinutes = new() { Minimum = 1, Maximum = 1440 };
+    private readonly ComboBox _cmbVideoBitrate = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly CheckBox _chkAutoStartFullRecording = new() { Text = "앱 시작 시 전체 녹화 시작", AutoSize = true };
     private bool _cameraListRefreshInProgress;
     private bool _onvifDiscoveryInProgress;
@@ -90,8 +91,14 @@ public sealed class SettingsForm : Form
         };
         Controls.Add(panel);
 
-        _cmbResolution.Items.AddRange(new object[] { "640x480", "800x600", "1280x720", "1920x1080" });
+        _cmbResolution.Items.AddRange(new object[] { "320x240", "640x480", "800x600", "1280x720", "1920x1080" });
         _cmbFps.Items.AddRange(new object[] { "60", "30", "15", "10", "5" });
+        _cmbVideoBitrate.Items.AddRange(new object[]
+        {
+            new BitrateOption("낮음 (320 kbps)", 320),
+            new BitrateOption("보통 (800 kbps)", 800),
+            new BitrateOption("높음 (2.5 Mbps)", 2500)
+        });
         _cmbStreamPath.Items.AddRange(new object[]
         {
             "/stream1",
@@ -119,7 +126,7 @@ public sealed class SettingsForm : Form
         panel.Controls.Add(Header("감지"));
         panel.Controls.Add(Row(Labeled("ROI 차이", _numRoiDiffThreshold, 160), Labeled("녹화 정지 대기", _numStopWaitSeconds, 205), Labeled("사전 녹화 버퍼", _numPreBufferSeconds, 195), Labeled("버퍼 최대 MB", _numPreBufferMaxMemory, 195)));
         panel.Controls.Add(Header("녹화"));
-        panel.Controls.Add(Row(Labeled("전체 녹화 간격(분)", _numFullIntervalMinutes, HalfFieldWidth), _chkAutoStartFullRecording));
+        panel.Controls.Add(Row(Labeled("전체 녹화 간격(분)", _numFullIntervalMinutes, 260), Labeled("녹화 비트 전송률", _cmbVideoBitrate, 260), _chkAutoStartFullRecording));
         panel.Controls.Add(Header("저장소"));
         panel.Controls.Add(Row(Labeled("디스크 정지 %", _numDiskStopThreshold, 175), Labeled("디스크 재개 %", _numDiskResumeThreshold, 175), Labeled("녹화 보관일", _numRecRetentionDays, 210), Labeled("정리 시간", _numCleanupHour, 175)));
         panel.Controls.Add(Row(_chkCleanupOnStartup, _chkStartInTray));
@@ -160,6 +167,7 @@ public sealed class SettingsForm : Form
         _numPreBufferSeconds.Value = Math.Clamp(_workingSettings.Detection.PreBufferSeconds, (int)_numPreBufferSeconds.Minimum, (int)_numPreBufferSeconds.Maximum);
         _numPreBufferMaxMemory.Value = Math.Clamp(_workingSettings.Detection.PreBufferMaxMemoryMB, (int)_numPreBufferMaxMemory.Minimum, (int)_numPreBufferMaxMemory.Maximum);
         _numFullIntervalMinutes.Value = Math.Clamp(_workingSettings.Recording.FullIntervalMinutes, (int)_numFullIntervalMinutes.Minimum, (int)_numFullIntervalMinutes.Maximum);
+        SelectBitrate(_workingSettings.Recording.VideoBitrateKbps);
         _chkAutoStartFullRecording.Checked = _workingSettings.Recording.AutoStartFullRecording;
         _chkAutoStartFullRecording.Enabled = _fullModeSelected;
         _numDiskStopThreshold.Value = Math.Clamp(_workingSettings.Storage.DiskStopThresholdPercent, (int)_numDiskStopThreshold.Minimum, (int)_numDiskStopThreshold.Maximum);
@@ -223,6 +231,9 @@ public sealed class SettingsForm : Form
         _workingSettings.Detection.PreBufferSeconds = (int)_numPreBufferSeconds.Value;
         _workingSettings.Detection.PreBufferMaxMemoryMB = (int)_numPreBufferMaxMemory.Value;
         _workingSettings.Recording.FullIntervalMinutes = (int)_numFullIntervalMinutes.Value;
+        _workingSettings.Recording.VideoBitrateKbps = _cmbVideoBitrate.SelectedItem is BitrateOption bitrate
+            ? bitrate.Kbps
+            : 800;
         _workingSettings.Recording.AutoStartFullRecording = _chkAutoStartFullRecording.Checked;
         _workingSettings.Storage.DiskStopThresholdPercent = (int)_numDiskStopThreshold.Value;
         _workingSettings.Storage.DiskResumeThresholdPercent = Math.Min((int)_numDiskResumeThreshold.Value, _workingSettings.Storage.DiskStopThresholdPercent);
@@ -541,5 +552,24 @@ public sealed class SettingsForm : Form
     private static decimal ClampPort(int port, NumericUpDown control)
     {
         return Math.Clamp(port, (int)control.Minimum, (int)control.Maximum);
+    }
+
+    private void SelectBitrate(int kbps)
+    {
+        foreach (var item in _cmbVideoBitrate.Items)
+        {
+            if (item is BitrateOption option && option.Kbps == kbps)
+            {
+                _cmbVideoBitrate.SelectedItem = item;
+                return;
+            }
+        }
+
+        _cmbVideoBitrate.SelectedIndex = 1;
+    }
+
+    private sealed record BitrateOption(string Label, int Kbps)
+    {
+        public override string ToString() => Label;
     }
 }
