@@ -13,6 +13,8 @@ public sealed class DetectionService : IDisposable
         var result = new DetectionResult { Timestamp = DateTime.Now };
         using var gray = new Mat();
         using var blurred = new Mat();
+        // 조명 노이즈와 카메라 센서 잡음을 줄인 뒤 기준 프레임과 비교한다.
+        // 원본 컬러보다 흐린 그레이스케일이 미세한 색 변화에 덜 흔들린다.
         Cv2.CvtColor(frame, gray, ColorConversionCodes.BGR2GRAY);
         Cv2.GaussianBlur(gray, blurred, new OpenCvSharp.Size(5, 5), 0);
 
@@ -28,6 +30,8 @@ public sealed class DetectionService : IDisposable
         using var baseline = CreateFrameSizedBaseline(blurred);
         Cv2.Absdiff(blurred, baseline, diff);
         Cv2.Threshold(diff, threshold, settings.Detection.MotionThreshold, 255, ThresholdTypes.Binary);
+        // Open으로 작은 점 잡음을 지우고, Close로 끊어진 움직임 영역을 이어 붙인다.
+        // 이 순서가 바뀌면 ROI_Diff 비율이 크게 달라질 수 있다.
         Cv2.MorphologyEx(threshold, threshold, MorphTypes.Open, Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(3, 3)));
         Cv2.MorphologyEx(threshold, threshold, MorphTypes.Close, Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(7, 7)));
         var mainRoi = ScaleRoiToFrame(settings.Rois.PersonWatchRoi, settings, threshold.Width, threshold.Height);
@@ -39,6 +43,8 @@ public sealed class DetectionService : IDisposable
         using var detectionMask = CreateDetectionMask(threshold.Size(), mainRoi, ignoreRois);
         Cv2.BitwiseAnd(threshold, detectionMask, threshold);
         result.MotionBoxes = FindMotionBoxes(threshold, settings.Detection.MinMotionArea);
+        // 최종 감지 점수는 "감지 ROI 안에서 변한 픽셀 비율"이다.
+        // 카메라 해상도가 바뀌어도 픽셀 개수가 아니라 비율로 비교하므로 임계값 의미가 유지된다.
         var mainRoiPixels = Cv2.CountNonZero(detectionMask);
         var roiChangedPixels = Cv2.CountNonZero(threshold);
         var ignoreAreaDiff = 0;
@@ -158,6 +164,8 @@ public sealed class DetectionService : IDisposable
             return;
         }
 
+        // 홈 ROI는 "원래 있어야 할 기준 영역"이 크게 달라졌는지 보는 보조 안정성 지표다.
+        // 현재 버전의 녹화 트리거는 ROI_Diff가 중심이지만, 상태 머신의 안정 판정은 이 값을 함께 본다.
         var homeRoi = ScaleRoiToFrame(settings.Rois.RodHomeRoi, settings, frame.Width, frame.Height);
         var rect = ClampRect(homeRoi.ToRectangle(), frame.Width, frame.Height);
         if (rect.Width <= 0 || rect.Height <= 0)
@@ -203,6 +211,7 @@ public sealed class DetectionService : IDisposable
 
     private static Mat CreateDetectionMask(OpenCvSharp.Size size, RoiRect mainRoi, IEnumerable<RoiRect> ignoreRois)
     {
+        // 흰색 영역만 감지 대상으로 남긴다. 제외 ROI는 마지막에 검정으로 덮어 우선권을 갖는다.
         var mask = new Mat(size, MatType.CV_8UC1, Scalar.Black);
         FillRoi(mask, mainRoi, Scalar.White);
         foreach (var ignoreRoi in ignoreRois)
@@ -263,6 +272,8 @@ public sealed class DetectionService : IDisposable
 
     public static RoiRect ScaleRoiToFrame(RoiRect roi, AppSettings settings, int frameWidth, int frameHeight)
     {
+        // ROI는 설정 당시의 기준 해상도 좌표로 저장된다.
+        // 실제 프레임 크기가 바뀌면 모든 ROI의 최대 범위를 기준 좌표계로 보고 현재 프레임에 맞춰 스케일한다.
         var sourceWidth = Math.Max(1, Math.Max(
             settings.Camera.ActiveWidth,
             new[] { settings.Rois.PersonWatchRoi, settings.Rois.IgnoreRoi, settings.Rois.RodHomeRoi, roi }

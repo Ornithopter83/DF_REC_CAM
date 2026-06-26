@@ -58,6 +58,8 @@ public sealed class RecordingService : IDisposable
             var sizeBytes = EstimateMatBytes(clone);
             _preBuffer.Enqueue(new BufferedFrame(clone, timestamp, sizeBytes));
             _preBufferBytes += sizeBytes;
+            // 이벤트가 확정되기 전 프레임도 일부 보관해 녹화 시작 직전 상황을 함께 남긴다.
+            // 메모리 사용량이 커지지 않도록 프레임 수와 추정 바이트 수를 동시에 제한한다.
             var maxFrames = Math.Max(1, _settings.Detection.PreBufferSeconds * Math.Max(1, _settings.Camera.ActiveFps));
             var maxBytes = Math.Max(1, _settings.Detection.PreBufferMaxMemoryMB) * 1024L * 1024L;
             while (_preBuffer.Count > maxFrames || _preBufferBytes > maxBytes)
@@ -80,6 +82,8 @@ public sealed class RecordingService : IDisposable
             _startTime = startTime;
             _recordingFps = GetRecordingFps();
             _frameInterval = TimeSpan.FromSeconds(1.0 / _recordingFps);
+            // 사전 버퍼가 있으면 가장 오래된 버퍼 프레임의 시각부터 타임라인을 시작한다.
+            // 그래야 이벤트 직전 프레임들이 실제 간격에 맞춰 파일 앞부분에 기록된다.
             _nextFrameDue = _preBuffer.Count > 0 ? _preBuffer.Peek().Timestamp : startTime;
             _lastWrittenFrame?.Dispose();
             _lastWrittenFrame = null;
@@ -203,6 +207,8 @@ public sealed class RecordingService : IDisposable
         var maxCatchUpFrames = Math.Max(1, _recordingFps * 2);
         if (framesToWrite > maxCatchUpFrames)
         {
+            // 카메라 지연이나 UI 정지 뒤에 밀린 프레임을 한꺼번에 복제하면 영상이 튀고 파일이 커진다.
+            // 너무 큰 공백은 현재 프레임 하나만 쓰고 타임라인을 다시 맞춘다.
             framesToWrite = 1;
             _nextFrameDue = timestamp;
         }
@@ -234,6 +240,8 @@ public sealed class RecordingService : IDisposable
 
     private OpenCvSharp.Size GetRecordingSize(Mat? firstFrame)
     {
+        // 녹화 크기는 첫 프레임, 사전 버퍼, 설정값 순서로 결정한다.
+        // 실제 프레임 비율이 설정 해상도와 다르면 찌그러짐을 피하려고 한쪽 축을 줄인다.
         if (firstFrame is not null && !firstFrame.Empty())
         {
             return GetConfiguredRecordingSize(firstFrame.Width, firstFrame.Height);
@@ -352,6 +360,7 @@ public sealed class RecordingService : IDisposable
         public static IRecordingWriter Start(string outputPath, int fps, OpenCvSharp.Size size, int bitrateKbps)
         {
             var ffmpegPath = FfmpegRecordingWriter.ResolveFfmpegPath();
+            // FFmpeg가 있으면 지정 비트레이트를 정확히 적용하고, 없으면 OpenCV 기본 writer로 녹화만 유지한다.
             return ffmpegPath is not null
                 ? FfmpegRecordingWriter.Start(ffmpegPath, outputPath, fps, bitrateKbps)
                 : OpenCvRecordingWriter.Start(outputPath, fps, size);
@@ -554,6 +563,7 @@ public sealed class RecordingService : IDisposable
 
         public static string? ResolveFfmpegPath()
         {
+            // 배포 환경마다 위치가 다를 수 있어 실행 폴더, PATH, 단일 exe에 임베드된 리소스 순서로 찾는다.
             var local = Path.Combine(AppContext.BaseDirectory, "ffmpeg.exe");
             if (File.Exists(local))
             {

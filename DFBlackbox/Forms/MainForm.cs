@@ -639,6 +639,8 @@ public sealed partial class MainForm : Form
     {
         var metadataFps = capture.Get(VideoCaptureProperties.Fps);
         var mp4DurationSeconds = _playbackDurationSeconds > 0 ? _playbackDurationSeconds : TryReadMp4DurationSeconds(filePath);
+        // OpenCV가 보고하는 FPS 메타데이터가 부정확한 파일이 있어, 우선 MP4 duration / 프레임 수로 평균 FPS를 재계산한다.
+        // 두 값이 10% 이상 다르면 재생 속도 체감이 달라지므로 duration 기반 값을 우선한다.
         var durationFps = frameCount > 1 && mp4DurationSeconds > 0
             ? frameCount / mp4DurationSeconds
             : TryEstimatePlaybackFpsFromOpenCvTimestamp(capture, frameCount);
@@ -706,6 +708,8 @@ public sealed partial class MainForm : Form
 
     private static double ReadMp4DurationFromContainer(Stream stream, long endOffset)
     {
+        // 외부 ffprobe 없이 MP4 컨테이너의 moov/mvhd atom만 읽어 전체 길이를 얻는다.
+        // 재생 FPS 계산용이므로 파싱 실패 시 0을 반환하고 OpenCV fallback으로 넘어간다.
         while (stream.Position + 8 <= endOffset)
         {
             var atomStart = stream.Position;
@@ -901,6 +905,8 @@ public sealed partial class MainForm : Form
 
                 nextFrameAtMs += intervalMs;
                 var delayMs = nextFrameAtMs - stopwatch.Elapsed.TotalMilliseconds;
+                // WinForms Timer 대신 Stopwatch 기준 누적 시각을 맞춰 장시간 재생 시 드리프트를 줄인다.
+                // 처리 시간이 프레임 간격보다 길면 대기하지 않고 다음 루프로 넘겨 UI 응답성을 유지한다.
                 if (delayMs > 1)
                 {
                     await Task.Delay(TimeSpan.FromMilliseconds(delayMs), token);
@@ -965,6 +971,8 @@ public sealed partial class MainForm : Form
 
         if (seek)
         {
+            // 사용자가 드래그/스텝 이동할 때만 명시 seek를 수행한다.
+            // 일반 재생 중에는 순차 Read를 유지해야 일부 코덱에서 프레임 건너뜀과 속도 저하가 적다.
             _playbackCapture.Set(VideoCaptureProperties.PosFrames, frameIndex);
         }
 
@@ -1099,6 +1107,8 @@ public sealed partial class MainForm : Form
                     var stateResult = algorithmEnabled
                         ? _stateMachine.Update(result, now)
                         : new StateUpdateResult { NewState = _stateMachine.CurrentState };
+                    // 녹화가 아직 시작되지 않았더라도 감시/수동 요청 중이면 사전 버퍼를 채운다.
+                    // 실제 트리거가 발생하면 이 버퍼가 녹화 파일 앞부분에 먼저 기록된다.
                     if (!_recordingService.IsRecording && ((_isWatching && rdoAutoRecording.Checked) || _manualRecordingRequested))
                     {
                         _recordingService.AddToPreBuffer(frame, now);
