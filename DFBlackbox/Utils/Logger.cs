@@ -17,8 +17,8 @@ public sealed class Logger
     {
         lock (_lock)
         {
-            var path = CreateExceptionLogPath();
-            var text = string.Join(
+            string path = CreateExceptionLogPath();
+            string text = string.Join(
                 Environment.NewLine,
                 $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [ERROR] {message}",
                 ex.ToString());
@@ -31,16 +31,16 @@ public sealed class Logger
     {
         lock (_lock)
         {
-            var path = Path.Combine(_folder, $"app_{DateTime.Now:yyyyMMdd}.log");
+            string path = Path.Combine(_folder, $"app_{DateTime.Now:yyyyMMdd}.log");
             File.AppendAllText(path, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{level}] {message}{Environment.NewLine}");
         }
     }
 
     private string CreateExceptionLogPath()
     {
-        var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        var path = Path.Combine(_folder, $"{stamp}.log");
-        var index = 1;
+        string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        string path = Path.Combine(_folder, $"{stamp}.log");
+        int index = 1;
         while (File.Exists(path))
         {
             path = Path.Combine(_folder, $"{stamp}_{index:00}.log");

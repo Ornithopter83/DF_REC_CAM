@@ -10,8 +10,8 @@ public sealed class FpsCounter
     public void Tick()
     {
         _frames++;
-        var now = DateTime.Now;
-        var elapsed = (now - _last).TotalSeconds;
+        DateTime now = DateTime.Now;
+        double elapsed = (now - _last).TotalSeconds;
         if (elapsed < 1)
         {
             return;

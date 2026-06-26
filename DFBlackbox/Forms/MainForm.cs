@@ -73,6 +73,7 @@ public sealed partial class MainForm : Form
     private bool _cameraListRefreshInProgress;
     private bool _applyingSettingsToUi;
     private bool _settingsDialogOpen;
+    private readonly bool _recordingOnlyMode;
     private bool _fullScreenMode;
     private Rectangle _normalBounds;
     private FormBorderStyle _normalBorderStyle;
@@ -107,10 +108,12 @@ public sealed partial class MainForm : Form
         IgnoreRoi
     }
 
-    public MainForm(bool startInTray = false)
+    public MainForm(bool startInTray = false, bool recordingOnlyMode = false)
     {
         _startInTray = startInTray;
+        _recordingOnlyMode = recordingOnlyMode;
         InitializeComponent();
+        ApplyRecordingOnlyModeUi();
         InitializeFullScreenHint();
         WireEvents();
         try
@@ -257,7 +260,7 @@ public sealed partial class MainForm : Form
         InitializeTrayIcon();
         _paths = new AppPaths(_settings.Storage);
         _paths.Ensure();
-        var legacySettingsRoot = _paths.Root;
+        string legacySettingsRoot = _paths.Root;
         _settingsManager = new SettingsManager(AppContext.BaseDirectory, legacySettingsRoot);
         _settings = _settingsManager.Load();
         _startInTray |= _settings.Storage.StartInTray;
@@ -348,7 +351,14 @@ public sealed partial class MainForm : Form
 
     private void ApplyRecordingModeToUi()
     {
-        var mode = _settings.Recording.Mode;
+        if (_recordingOnlyMode
+            && string.Equals(_settings.Recording.Mode, "Auto", StringComparison.OrdinalIgnoreCase))
+        {
+            rdoManualRecording.Checked = true;
+            return;
+        }
+
+        string mode = _settings.Recording.Mode;
         if (string.Equals(mode, "Full", StringComparison.OrdinalIgnoreCase))
         {
             rdoFullRecording.Checked = true;
@@ -358,6 +368,22 @@ public sealed partial class MainForm : Form
             rdoAutoRecording.Checked = true;
         }
         else
+        {
+            rdoManualRecording.Checked = true;
+        }
+    }
+
+    private void ApplyRecordingOnlyModeUi()
+    {
+        if (!_recordingOnlyMode)
+        {
+            return;
+        }
+
+        btnSaveHomeReference.Visible = false;
+        btnWatchToggle.Visible = false;
+        rdoAutoRecording.Visible = false;
+        if (rdoAutoRecording.Checked)
         {
             rdoManualRecording.Checked = true;
         }
@@ -509,7 +535,7 @@ public sealed partial class MainForm : Form
         btnConnectCamera.Enabled = false;
         lblCameraStatus.Text = "카메라: 연결 중";
         lblRtspStatus.Text = _settings.Camera.IsIpCamera ? "RTSP: 연결 중" : "RTSP: 해당 없음";
-        var opened = await Task.Run(() => _cameraService.Open(_settings));
+        bool opened = await Task.Run(() => _cameraService.Open(_settings));
         btnConnectCamera.Enabled = true;
         _lastFrameAt = DateTime.Now;
         _consecutiveFrameFailures = 0;
@@ -554,7 +580,7 @@ public sealed partial class MainForm : Form
         await StopCaptureLoopAsync();
         StopRecordingIfActive(DateTime.Now);
         SetWatching(false);
-        var old = picCameraPreview.Image;
+        Image? old = picCameraPreview.Image;
         picCameraPreview.Image = null;
         old?.Dispose();
         lblCameraStatus.Text = _cameraService.IsOpened ? $"{GetCameraStatusText()} / 닫힘" : "카메라: 닫힘";
@@ -627,7 +653,7 @@ public sealed partial class MainForm : Form
         playbackControl.IsPlaying = false;
         if (clearPreview)
         {
-            var old = picCameraPreview.Image;
+            Image? old = picCameraPreview.Image;
             picCameraPreview.Image = null;
             old?.Dispose();
         }
@@ -637,11 +663,11 @@ public sealed partial class MainForm : Form
 
     private double DetectPlaybackFps(VideoCapture capture, string filePath, int frameCount)
     {
-        var metadataFps = capture.Get(VideoCaptureProperties.Fps);
-        var mp4DurationSeconds = _playbackDurationSeconds > 0 ? _playbackDurationSeconds : TryReadMp4DurationSeconds(filePath);
+        double metadataFps = capture.Get(VideoCaptureProperties.Fps);
+        double mp4DurationSeconds = _playbackDurationSeconds > 0 ? _playbackDurationSeconds : TryReadMp4DurationSeconds(filePath);
         // OpenCV가 보고하는 FPS 메타데이터가 부정확한 파일이 있어, 우선 MP4 duration / 프레임 수로 평균 FPS를 재계산한다.
         // 두 값이 10% 이상 다르면 재생 속도 체감이 달라지므로 duration 기반 값을 우선한다.
-        var durationFps = frameCount > 1 && mp4DurationSeconds > 0
+        double durationFps = frameCount > 1 && mp4DurationSeconds > 0
             ? frameCount / mp4DurationSeconds
             : TryEstimatePlaybackFpsFromOpenCvTimestamp(capture, frameCount);
         if (IsValidPlaybackFps(durationFps))
@@ -669,7 +695,7 @@ public sealed partial class MainForm : Form
             return 0;
         }
 
-        var originalFrame = capture.Get(VideoCaptureProperties.PosFrames);
+        double originalFrame = capture.Get(VideoCaptureProperties.PosFrames);
         try
         {
             capture.Set(VideoCaptureProperties.PosFrames, frameCount - 1);
@@ -679,7 +705,7 @@ public sealed partial class MainForm : Form
                 return 0;
             }
 
-            var lastFrameMs = capture.Get(VideoCaptureProperties.PosMsec);
+            double lastFrameMs = capture.Get(VideoCaptureProperties.PosMsec);
             if (lastFrameMs <= 0 || double.IsNaN(lastFrameMs) || double.IsInfinity(lastFrameMs))
             {
                 return 0;
@@ -712,9 +738,9 @@ public sealed partial class MainForm : Form
         // 재생 FPS 계산용이므로 파싱 실패 시 0을 반환하고 OpenCV fallback으로 넘어간다.
         while (stream.Position + 8 <= endOffset)
         {
-            var atomStart = stream.Position;
-            var atomSize = ReadUInt32BigEndian(stream);
-            var atomType = ReadAscii(stream, 4);
+            long atomStart = stream.Position;
+            uint atomSize = ReadUInt32BigEndian(stream);
+            string atomType = ReadAscii(stream, 4);
             long headerSize = 8;
             if (atomSize == 1)
             {
@@ -724,7 +750,7 @@ public sealed partial class MainForm : Form
                 }
 
                 atomSize = 0;
-                var extendedSize = ReadUInt64BigEndian(stream);
+                ulong extendedSize = ReadUInt64BigEndian(stream);
                 headerSize = 16;
                 if (extendedSize > long.MaxValue)
                 {
@@ -732,8 +758,8 @@ public sealed partial class MainForm : Form
                 }
 
                 atomSize = (uint)Math.Min(uint.MaxValue, extendedSize);
-                var atomEnd = atomStart + (long)extendedSize;
-                var duration = ReadMp4AtomPayload(stream, atomType, atomEnd);
+                long atomEnd = atomStart + (long)extendedSize;
+                double duration = ReadMp4AtomPayload(stream, atomType, atomEnd);
                 if (duration > 0)
                 {
                     return duration;
@@ -748,8 +774,8 @@ public sealed partial class MainForm : Form
                 return 0;
             }
 
-            var currentAtomEnd = atomSize == 0 ? endOffset : Math.Min(atomStart + atomSize, endOffset);
-            var found = ReadMp4AtomPayload(stream, atomType, currentAtomEnd);
+            long currentAtomEnd = atomSize == 0 ? endOffset : Math.Min(atomStart + atomSize, endOffset);
+            double found = ReadMp4AtomPayload(stream, atomType, currentAtomEnd);
             if (found > 0)
             {
                 return found;
@@ -783,7 +809,7 @@ public sealed partial class MainForm : Form
             return 0;
         }
 
-        var version = stream.ReadByte();
+        int version = stream.ReadByte();
         stream.Position += 3;
         if (version == 1)
         {
@@ -793,8 +819,8 @@ public sealed partial class MainForm : Form
             }
 
             stream.Position += 16;
-            var timescale = ReadUInt32BigEndian(stream);
-            var duration = ReadUInt64BigEndian(stream);
+            uint timescale = ReadUInt32BigEndian(stream);
+            ulong duration = ReadUInt64BigEndian(stream);
             return timescale > 0 ? duration / (double)timescale : 0;
         }
 
@@ -804,8 +830,8 @@ public sealed partial class MainForm : Form
         }
 
         stream.Position += 8;
-        var scale = ReadUInt32BigEndian(stream);
-        var duration32 = ReadUInt32BigEndian(stream);
+        uint scale = ReadUInt32BigEndian(stream);
+        uint duration32 = ReadUInt32BigEndian(stream);
         return scale > 0 ? duration32 / (double)scale : 0;
     }
 
@@ -891,9 +917,9 @@ public sealed partial class MainForm : Form
     {
         try
         {
-            var intervalMs = Math.Clamp(1000.0 / Math.Max(1, _playbackFps), 1, 200);
+            double intervalMs = Math.Clamp(1000.0 / Math.Max(1, _playbackFps), 1, 200);
             var stopwatch = Stopwatch.StartNew();
-            var nextFrameAtMs = 0.0;
+            double nextFrameAtMs = 0.0;
 
             while (!token.IsCancellationRequested && _isPlaybackMode && _playbackPlaying)
             {
@@ -904,7 +930,7 @@ public sealed partial class MainForm : Form
                 }
 
                 nextFrameAtMs += intervalMs;
-                var delayMs = nextFrameAtMs - stopwatch.Elapsed.TotalMilliseconds;
+                double delayMs = nextFrameAtMs - stopwatch.Elapsed.TotalMilliseconds;
                 // WinForms Timer 대신 Stopwatch 기준 누적 시각을 맞춰 장시간 재생 시 드리프트를 줄인다.
                 // 처리 시간이 프레임 간격보다 길면 대기하지 않고 다음 루프로 넘겨 UI 응답성을 유지한다.
                 if (delayMs > 1)
@@ -1023,9 +1049,9 @@ public sealed partial class MainForm : Form
 
     private void UpdatePlaybackInfo()
     {
-        var total = _playbackFrameCount > 0 ? _playbackFrameCount.ToString() : "?";
-        var time = _playbackFps > 0 ? _playbackFrameIndex / _playbackFps : 0;
-        var totalSeconds = _playbackDurationSeconds > 0
+        string total = _playbackFrameCount > 0 ? _playbackFrameCount.ToString() : "?";
+        double time = _playbackFps > 0 ? _playbackFrameIndex / _playbackFps : 0;
+        double totalSeconds = _playbackDurationSeconds > 0
             ? _playbackDurationSeconds
             : _playbackFps > 0 && _playbackFrameCount > 0
                 ? _playbackFrameCount / _playbackFps
@@ -1074,7 +1100,7 @@ public sealed partial class MainForm : Form
             seconds = 0;
         }
 
-        var time = TimeSpan.FromSeconds(seconds);
+        TimeSpan time = TimeSpan.FromSeconds(seconds);
         return time.TotalHours >= 1
             ? $"{(int)time.TotalHours:0}:{time.Minutes:00}:{time.Seconds:00}"
             : $"{time.Minutes:00}:{time.Seconds:00}";
@@ -1098,9 +1124,9 @@ public sealed partial class MainForm : Form
                 using (frame)
                 {
                     SetLatestFrame(frame);
-                    var now = DateTime.Now;
+                    DateTime now = DateTime.Now;
                     _stateMachine.AutoRecordingEnabled = _isWatching && rdoAutoRecording.Checked;
-                    var algorithmEnabled = _isWatching && ShouldRunAlgorithm();
+                    bool algorithmEnabled = _isWatching && ShouldRunAlgorithm();
                     var result = algorithmEnabled
                         ? AnalyzeFrame(frame, now)
                         : CreateBypassDetectionResult(now);
@@ -1149,7 +1175,7 @@ public sealed partial class MainForm : Form
 
                     if (stateResult.ShouldStopRecording && !_fullRecordingRequested)
                     {
-                        var filePath = _recordingService.StopRecording(now);
+                        string filePath = _recordingService.StopRecording(now);
                         ShowRecordingStamp("Recording stopped", Color.FromArgb(192, 92, 24));
                         SaveEventLog(filePath, now);
                         _stateMachine.CompleteRecording(now);
@@ -1177,7 +1203,7 @@ public sealed partial class MainForm : Form
 
     private async Task HandleNoFrameAsync(CancellationToken token)
     {
-        var timeout = TimeSpan.FromSeconds(_settings.Camera.NoFrameTimeoutSeconds);
+        TimeSpan timeout = TimeSpan.FromSeconds(_settings.Camera.NoFrameTimeoutSeconds);
         if (_consecutiveFrameFailures >= 10 || (_lastFrameAt != DateTime.MinValue && DateTime.Now - _lastFrameAt > timeout))
         {
             _cameraService.MarkReconnecting();
@@ -1188,7 +1214,7 @@ public sealed partial class MainForm : Form
             });
             _cameraService.Close();
             await Task.Delay(TimeSpan.FromSeconds(_settings.Camera.ReconnectDelaySeconds), token);
-            var opened = _cameraService.Open(_settings);
+            bool opened = _cameraService.Open(_settings);
             BeginInvoke(() =>
             {
                 lblCameraStatus.Text = opened ? GetCameraStatusText() : GetCameraErrorText();
@@ -1205,8 +1231,8 @@ public sealed partial class MainForm : Form
 
     private Mat DrawOverlay(Mat frame, DetectionResult result, StateUpdateResult? stateResult = null)
     {
-        var sourceWidth = Math.Max(1, frame.Width);
-        var sourceHeight = Math.Max(1, frame.Height);
+        int sourceWidth = Math.Max(1, frame.Width);
+        int sourceHeight = Math.Max(1, frame.Height);
         var output = CreateOverlayCanvas(frame);
         DrawPrivacyMasks(output);
         if (_settings.Overlay.ShowRodRoi && (!_isPlaybackMode || _settings.Overlay.ShowPlaybackRoiOutlines))
@@ -1261,11 +1287,11 @@ public sealed partial class MainForm : Form
 
     private void DrawRecordingHoldOverlay(Mat output, DetectionResult result, StateUpdateResult stateResult)
     {
-        var reason = string.IsNullOrWhiteSpace(stateResult.RecordingHoldReason)
+        string reason = string.IsNullOrWhiteSpace(stateResult.RecordingHoldReason)
             ? "KEEP: unknown"
             : stateResult.RecordingHoldReason;
-        var scale = OverlayScale(output);
-        var y = Math.Max(ScaleOverlayLength(64, scale), output.Height - ScaleOverlayLength(64, scale));
+        double scale = OverlayScale(output);
+        int y = Math.Max(ScaleOverlayLength(64, scale), output.Height - ScaleOverlayLength(64, scale));
         Cv2.Rectangle(output, new OpenCvSharp.Rect(
             ScaleOverlayLength(18, scale),
             y - ScaleOverlayLength(34, scale),
@@ -1276,9 +1302,9 @@ public sealed partial class MainForm : Form
 
     private void DrawPlaybackDiffOverlay(Mat output, DetectionResult result)
     {
-        var text = $"ROI_Diff {result.PersonMotionScore:0.000} / th {_settings.Detection.PersonMotionRatioThreshold:0.000}";
-        var scale = OverlayScale(output);
-        var y = Math.Max(ScaleOverlayLength(64, scale), output.Height - ScaleOverlayLength(64, scale));
+        string text = $"ROI_Diff {result.PersonMotionScore:0.000} / th {_settings.Detection.PersonMotionRatioThreshold:0.000}";
+        double scale = OverlayScale(output);
+        int y = Math.Max(ScaleOverlayLength(64, scale), output.Height - ScaleOverlayLength(64, scale));
         Cv2.Rectangle(output, new OpenCvSharp.Rect(
             ScaleOverlayLength(18, scale),
             y - ScaleOverlayLength(34, scale),
@@ -1405,7 +1431,7 @@ public sealed partial class MainForm : Form
 
     private void ApplyPreviewBitmap(Bitmap bitmap, DetectionResult result)
     {
-        var old = picCameraPreview.Image;
+        Image? old = picCameraPreview.Image;
         picCameraPreview.Image = bitmap;
         old?.Dispose();
         lblFps.Text = $"FPS: {_fpsCounter.CurrentFps:0.0}";
@@ -1458,9 +1484,9 @@ public sealed partial class MainForm : Form
 
     private bool CanStartRecordingOnDisk(DateTime now, string triggerReason)
     {
-        var usedPercent = DiskUtils.GetUsedPercent(_paths.RecVideos);
-        var stopThreshold = Math.Clamp(_settings.Storage.DiskStopThresholdPercent, 1, 100);
-        var resumeThreshold = Math.Clamp(_settings.Storage.DiskResumeThresholdPercent, 1, stopThreshold);
+        double usedPercent = DiskUtils.GetUsedPercent(_paths.RecVideos);
+        int stopThreshold = Math.Clamp(_settings.Storage.DiskStopThresholdPercent, 1, 100);
+        int resumeThreshold = Math.Clamp(_settings.Storage.DiskResumeThresholdPercent, 1, stopThreshold);
         if (_recordingBlockedByDisk && usedPercent > resumeThreshold)
         {
             return BlockRecordingForDisk(now, triggerReason, usedPercent, stopThreshold, resumeThreshold);
@@ -1500,8 +1526,8 @@ public sealed partial class MainForm : Form
         _cleanupTimer = new System.Windows.Forms.Timer { Interval = 60000 };
         _cleanupTimer.Tick += (_, _) =>
         {
-            var now = DateTime.Now;
-            var cleanupHour = Math.Clamp(_settings.Storage.CleanupHour, 0, 23);
+            DateTime now = DateTime.Now;
+            int cleanupHour = Math.Clamp(_settings.Storage.CleanupHour, 0, 23);
             if (_lastCleanupDate.Date == now.Date || now.Hour != cleanupHour)
             {
                 return;
@@ -1550,7 +1576,7 @@ public sealed partial class MainForm : Form
 
         if (cmbResolution.SelectedItem is string resolution)
         {
-            var parts = resolution.Split('x');
+            string[] parts = resolution.Split('x');
             if (_settings.Camera.IsIpCamera)
             {
                 _settings.Camera.IpCamera.Width = int.Parse(parts[0]);
@@ -1589,7 +1615,7 @@ public sealed partial class MainForm : Form
     {
         _settings.Recording.Mode = rdoFullRecording.Checked
             ? "Full"
-            : rdoAutoRecording.Checked
+            : !_recordingOnlyMode && rdoAutoRecording.Checked
                 ? "Auto"
                 : "Manual";
     }
@@ -1626,7 +1652,7 @@ public sealed partial class MainForm : Form
         _settingsDialogOpen = true;
         try
         {
-            using var form = new SettingsForm(_settings, ApplySettingsFromDialog, rdoFullRecording.Checked);
+            using var form = new SettingsForm(_settings, ApplySettingsFromDialog, rdoFullRecording.Checked, _recordingOnlyMode);
             form.ShowDialog(this);
         }
         finally
@@ -1729,7 +1755,7 @@ public sealed partial class MainForm : Form
 
     private async Task<bool> WaitForFirstCameraFrameAsync(TimeSpan timeout)
     {
-        var until = DateTime.Now + timeout;
+        DateTime until = DateTime.Now + timeout;
         while (DateTime.Now < until)
         {
             if (IsDisposed)
@@ -1750,7 +1776,7 @@ public sealed partial class MainForm : Form
 
     private void UpdateCameraTypeUi()
     {
-        var usb = rdoUsbCamera.Checked;
+        bool usb = rdoUsbCamera.Checked;
         foreach (var control in new Control[] { cmbCameraList, btnRefreshCamera, btnCameraProperty })
         {
             control.Enabled = usb;
@@ -1953,18 +1979,18 @@ public sealed partial class MainForm : Form
     private System.Drawing.Size GetRoiSourceSize()
     {
         var rois = new[] { _settings.Rois.PersonWatchRoi, _settings.Rois.IgnoreRoi, _settings.Rois.RodHomeRoi };
-        var width = Math.Max(1, Math.Max(_settings.Camera.ActiveWidth, rois.Max(roi => roi.X + roi.Width)));
-        var height = Math.Max(1, Math.Max(_settings.Camera.ActiveHeight, rois.Max(roi => roi.Y + roi.Height)));
+        int width = Math.Max(1, Math.Max(_settings.Camera.ActiveWidth, rois.Max(roi => roi.X + roi.Width)));
+        int height = Math.Max(1, Math.Max(_settings.Camera.ActiveHeight, rois.Max(roi => roi.Y + roi.Height)));
         return new System.Drawing.Size(width, height);
     }
 
     private RoiEditMode HitTestRoi(System.Drawing.Point point, Rectangle rect)
     {
-        var tolerance = Math.Max(8, Math.Min(rect.Width, rect.Height) / 20);
-        var nearLeft = Math.Abs(point.X - rect.Left) <= tolerance;
-        var nearRight = Math.Abs(point.X - rect.Right) <= tolerance;
-        var nearTop = Math.Abs(point.Y - rect.Top) <= tolerance;
-        var nearBottom = Math.Abs(point.Y - rect.Bottom) <= tolerance;
+        int tolerance = Math.Max(8, Math.Min(rect.Width, rect.Height) / 20);
+        bool nearLeft = Math.Abs(point.X - rect.Left) <= tolerance;
+        bool nearRight = Math.Abs(point.X - rect.Right) <= tolerance;
+        bool nearTop = Math.Abs(point.Y - rect.Top) <= tolerance;
+        bool nearBottom = Math.Abs(point.Y - rect.Bottom) <= tolerance;
 
         if (nearLeft && nearTop) return RoiEditMode.TopLeft;
         if (nearRight && nearTop) return RoiEditMode.TopRight;
@@ -1992,12 +2018,12 @@ public sealed partial class MainForm : Form
 
     private static Rectangle ApplyRoiEdit(Rectangle startRect, System.Drawing.Point startPoint, System.Drawing.Point currentPoint, RoiEditMode mode)
     {
-        var dx = currentPoint.X - startPoint.X;
-        var dy = currentPoint.Y - startPoint.Y;
-        var left = startRect.Left;
-        var right = startRect.Right;
-        var top = startRect.Top;
-        var bottom = startRect.Bottom;
+        int dx = currentPoint.X - startPoint.X;
+        int dy = currentPoint.Y - startPoint.Y;
+        int left = startRect.Left;
+        int right = startRect.Right;
+        int top = startRect.Top;
+        int bottom = startRect.Bottom;
 
         switch (mode)
         {
@@ -2054,10 +2080,10 @@ public sealed partial class MainForm : Form
             return rect;
         }
 
-        var x = Math.Clamp(rect.X, 0, Math.Max(0, image.Width - 1));
-        var y = Math.Clamp(rect.Y, 0, Math.Max(0, image.Height - 1));
-        var right = Math.Clamp(rect.Right, x + 1, image.Width);
-        var bottom = Math.Clamp(rect.Bottom, y + 1, image.Height);
+        int x = Math.Clamp(rect.X, 0, Math.Max(0, image.Width - 1));
+        int y = Math.Clamp(rect.Y, 0, Math.Max(0, image.Height - 1));
+        int right = Math.Clamp(rect.Right, x + 1, image.Width);
+        int bottom = Math.Clamp(rect.Bottom, y + 1, image.Height);
         return Rectangle.FromLTRB(x, y, right, bottom);
     }
 
@@ -2070,8 +2096,8 @@ public sealed partial class MainForm : Form
             return false;
         }
 
-        var imageAspect = image.Width / (double)image.Height;
-        var boxAspect = picCameraPreview.Width / (double)picCameraPreview.Height;
+        double imageAspect = image.Width / (double)image.Height;
+        double boxAspect = picCameraPreview.Width / (double)picCameraPreview.Height;
         int displayWidth;
         int displayHeight;
         int offsetX;
@@ -2096,8 +2122,8 @@ public sealed partial class MainForm : Form
             return false;
         }
 
-        var x = (int)((previewPoint.X - offsetX) * image.Width / (double)displayWidth);
-        var y = (int)((previewPoint.Y - offsetY) * image.Height / (double)displayHeight);
+        int x = (int)((previewPoint.X - offsetX) * image.Width / (double)displayWidth);
+        int y = (int)((previewPoint.Y - offsetY) * image.Height / (double)displayHeight);
         framePoint = new System.Drawing.Point(Math.Clamp(x, 0, image.Width - 1), Math.Clamp(y, 0, image.Height - 1));
         return true;
     }
@@ -2162,7 +2188,7 @@ public sealed partial class MainForm : Form
 
         if (_recordingService.IsRecording)
         {
-            var filePath = _recordingService.StopRecording(now);
+            string filePath = _recordingService.StopRecording(now);
             ShowRecordingStamp("녹화 정지", Color.FromArgb(192, 92, 24));
             SaveEventLog(filePath, now);
         }
@@ -2205,7 +2231,7 @@ public sealed partial class MainForm : Form
         rdoManualRecording.Checked = true;
         if (!_recordingService.IsRecording && _cameraService.IsOpened)
         {
-            var now = DateTime.Now;
+            DateTime now = DateTime.Now;
             if (!CanStartRecordingOnDisk(now, "Manual"))
             {
                 _stateMachine.RequestManualRecordingStop();
@@ -2249,7 +2275,7 @@ public sealed partial class MainForm : Form
             return;
         }
 
-        var filePath = _recordingService.StopRecording(endTime);
+        string? filePath = _recordingService.StopRecording(endTime);
         ShowRecordingStamp("녹화 정지", Color.FromArgb(192, 92, 24));
         SaveEventLog(filePath, endTime);
         _stateMachine.CompleteRecording(endTime);
@@ -2271,12 +2297,12 @@ public sealed partial class MainForm : Form
         }
 
         using var graphics = Graphics.FromImage(bitmap);
-        var scale = OverlayScale(bitmap.Width, bitmap.Height);
+        double scale = OverlayScale(bitmap.Width, bitmap.Height);
         using var font = new Font("Malgun Gothic", OverlayFontSize(18F, scale), FontStyle.Bold);
-        var padding = ScaleOverlayLength(12, scale);
-        var margin = ScaleOverlayLength(18, scale);
-        var textSize = graphics.MeasureString(_recordingStampText, font);
-        var rect = new RectangleF(margin, margin, textSize.Width + padding * 2, textSize.Height + padding);
+        int padding = ScaleOverlayLength(12, scale);
+        int margin = ScaleOverlayLength(18, scale);
+        SizeF textSize = graphics.MeasureString(_recordingStampText, font);
+        RectangleF rect = new RectangleF(margin, margin, textSize.Width + padding * 2, textSize.Height + padding);
         using var background = new SolidBrush(Color.FromArgb(220, _recordingStampBackColor));
         using var foreground = new SolidBrush(Color.White);
         graphics.FillRectangle(background, rect);
@@ -2292,7 +2318,7 @@ public sealed partial class MainForm : Form
             return;
         }
 
-        var blinkOn = (DateTime.Now.Millisecond / 350) % 2 == 0;
+        bool blinkOn = (DateTime.Now.Millisecond / 350) % 2 == 0;
         if (!blinkOn)
         {
             return;
@@ -2300,12 +2326,12 @@ public sealed partial class MainForm : Form
 
         const string text = "REC";
         using var graphics = Graphics.FromImage(bitmap);
-        var scale = OverlayScale(bitmap.Width, bitmap.Height);
+        double scale = OverlayScale(bitmap.Width, bitmap.Height);
         using var font = new Font("Malgun Gothic", OverlayFontSize(20F, scale), FontStyle.Bold);
-        var padding = ScaleOverlayLength(12, scale);
-        var margin = ScaleOverlayLength(18, scale);
-        var textSize = graphics.MeasureString(text, font);
-        var rect = new RectangleF(bitmap.Width - textSize.Width - padding * 2 - margin, margin, textSize.Width + padding * 2, textSize.Height + padding);
+        int padding = ScaleOverlayLength(12, scale);
+        int margin = ScaleOverlayLength(18, scale);
+        SizeF textSize = graphics.MeasureString(text, font);
+        RectangleF rect = new RectangleF(bitmap.Width - textSize.Width - padding * 2 - margin, margin, textSize.Width + padding * 2, textSize.Height + padding);
         using var background = new SolidBrush(Color.FromArgb(230, 190, 24, 32));
         using var foreground = new SolidBrush(Color.White);
         graphics.FillRectangle(background, rect);
@@ -2332,10 +2358,10 @@ public sealed partial class MainForm : Form
             return;
         }
 
-        var previewOpen = IsCameraPreviewOpen();
-        var recording = _recordingService.IsRecording;
-        var usb = rdoUsbCamera.Checked;
-        var cameraActionAvailable = !recording && !_cameraListRefreshInProgress;
+        bool previewOpen = IsCameraPreviewOpen();
+        bool recording = _recordingService.IsRecording;
+        bool usb = rdoUsbCamera.Checked;
+        bool cameraActionAvailable = !recording && !_cameraListRefreshInProgress;
 
         btnRefreshCamera.Enabled = usb && !_cameraListRefreshInProgress;
         btnCameraProperty.Enabled = usb && cmbCameraList.SelectedItem is int;
@@ -2373,7 +2399,7 @@ public sealed partial class MainForm : Form
     {
         lock (_latestFrameSync)
         {
-            var old = _latestFrame;
+            Mat? old = _latestFrame;
             _latestFrame = frame.Clone();
             old?.Dispose();
         }
@@ -2607,7 +2633,7 @@ public sealed partial class MainForm : Form
             return;
         }
 
-        var elapsed = (DateTime.Now - _fullScreenHintStartedAt).TotalMilliseconds;
+        double elapsed = (DateTime.Now - _fullScreenHintStartedAt).TotalMilliseconds;
         const double holdMs = 900;
         const double fadeMs = 1800;
         if (elapsed <= holdMs)
@@ -2616,7 +2642,7 @@ public sealed partial class MainForm : Form
             return;
         }
 
-        var fadeRatio = Math.Clamp((elapsed - holdMs) / fadeMs, 0, 1);
+        double fadeRatio = Math.Clamp((elapsed - holdMs) / fadeMs, 0, 1);
         _fullScreenHint.Opacity = (int)Math.Round(255 * (1 - fadeRatio));
         if (fadeRatio >= 1)
         {
@@ -2689,7 +2715,7 @@ public sealed partial class MainForm : Form
             return;
         }
 
-        var availableWidth = sidePanel.ClientSize.Width - playbackPanel.Padding.Horizontal;
+        int availableWidth = sidePanel.ClientSize.Width - playbackPanel.Padding.Horizontal;
         if (availableWidth <= 0)
         {
             return;
@@ -2763,7 +2789,7 @@ public sealed partial class MainForm : Form
     private static void DrawRoi(Mat output, RoiRect roi, Scalar color, string label, int thickness)
     {
         var rect = ToCvRect(roi.ToRectangle());
-        var lineThickness = OverlayThickness(output, thickness);
+        int lineThickness = OverlayThickness(output, thickness);
         Cv2.Rectangle(output, rect, color, lineThickness);
         Cv2.PutText(
             output,
@@ -2785,11 +2811,11 @@ public sealed partial class MainForm : Form
 
     private static void DrawRoiHandle(Mat output, int x, int y, Scalar color)
     {
-        var half = OverlayLength(output, 5);
-        var left = Math.Clamp(x - half, 0, Math.Max(0, output.Width - 1));
-        var top = Math.Clamp(y - half, 0, Math.Max(0, output.Height - 1));
-        var right = Math.Clamp(x + half, 0, Math.Max(0, output.Width - 1));
-        var bottom = Math.Clamp(y + half, 0, Math.Max(0, output.Height - 1));
+        int half = OverlayLength(output, 5);
+        int left = Math.Clamp(x - half, 0, Math.Max(0, output.Width - 1));
+        int top = Math.Clamp(y - half, 0, Math.Max(0, output.Height - 1));
+        int right = Math.Clamp(x + half, 0, Math.Max(0, output.Width - 1));
+        int bottom = Math.Clamp(y + half, 0, Math.Max(0, output.Height - 1));
         Cv2.Rectangle(output, new Rect(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top)), color, -1);
     }
 
@@ -2797,8 +2823,8 @@ public sealed partial class MainForm : Form
 
     private static Mat CreateOverlayCanvas(Mat frame)
     {
-        var targetHeight = (int)OverlayReferenceHeight;
-        var targetWidth = Math.Max(2, (int)Math.Round(frame.Width * (targetHeight / (double)Math.Max(1, frame.Height))));
+        int targetHeight = (int)OverlayReferenceHeight;
+        int targetWidth = Math.Max(2, (int)Math.Round(frame.Width * (targetHeight / (double)Math.Max(1, frame.Height))));
         if (targetWidth % 2 != 0)
         {
             targetWidth++;
@@ -2816,12 +2842,12 @@ public sealed partial class MainForm : Form
 
     private static Rectangle ScaleRectToOverlay(Rectangle rect, int sourceWidth, int sourceHeight, Mat overlay)
     {
-        var scaleX = overlay.Width / (double)Math.Max(1, sourceWidth);
-        var scaleY = overlay.Height / (double)Math.Max(1, sourceHeight);
-        var x = (int)Math.Round(rect.X * scaleX);
-        var y = (int)Math.Round(rect.Y * scaleY);
-        var width = Math.Max(1, (int)Math.Round(rect.Width * scaleX));
-        var height = Math.Max(1, (int)Math.Round(rect.Height * scaleY));
+        double scaleX = overlay.Width / (double)Math.Max(1, sourceWidth);
+        double scaleY = overlay.Height / (double)Math.Max(1, sourceHeight);
+        int x = (int)Math.Round(rect.X * scaleX);
+        int y = (int)Math.Round(rect.Y * scaleY);
+        int width = Math.Max(1, (int)Math.Round(rect.Width * scaleX));
+        int height = Math.Max(1, (int)Math.Round(rect.Height * scaleY));
         return new Rectangle(x, y, width, height);
     }
 
@@ -2842,13 +2868,13 @@ public sealed partial class MainForm : Form
 
     private static OpenCvSharp.Point OverlayPoint(Mat frame, int x, int y)
     {
-        var scale = OverlayScale(frame);
+        double scale = OverlayScale(frame);
         return new OpenCvSharp.Point(ScaleOverlayLength(x, scale), ScaleOverlayLength(y, scale));
     }
 
     private static OpenCvSharp.Point OverlayBottomLeftPoint(Mat frame, int x, int bottomMargin)
     {
-        var scale = OverlayScale(frame);
+        double scale = OverlayScale(frame);
         return new OpenCvSharp.Point(ScaleOverlayLength(x, scale), frame.Height - ScaleOverlayLength(bottomMargin, scale));
     }
 
@@ -2886,7 +2912,7 @@ public sealed partial class MainForm : Form
             get => _opacity;
             set
             {
-                var clamped = Math.Clamp(value, 0, 255);
+                int clamped = Math.Clamp(value, 0, 255);
                 if (_opacity == clamped)
                 {
                     return;
@@ -2919,12 +2945,12 @@ public sealed partial class MainForm : Form
             }
 
             e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
-            var alpha = Math.Clamp(Opacity, 0, 255);
+            int alpha = Math.Clamp(Opacity, 0, 255);
             using var shadow = new SolidBrush(Color.FromArgb(alpha * 160 / 255, Color.Black));
             using var foreground = new SolidBrush(Color.FromArgb(alpha, Color.White));
-            var size = e.Graphics.MeasureString(Text, Font);
-            var x = (Width - size.Width) / 2F;
-            var y = (Height - size.Height) / 2F;
+            SizeF size = e.Graphics.MeasureString(Text, Font);
+            float x = (Width - size.Width) / 2F;
+            float y = (Height - size.Height) / 2F;
             e.Graphics.DrawString(Text, Font, shadow, x + 2, y + 2);
             e.Graphics.DrawString(Text, Font, foreground, x, y);
         }

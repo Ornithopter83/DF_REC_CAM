@@ -21,14 +21,14 @@ public static class DiskUtils
     public static long GetFreeDiskBytes(string folder)
     {
         Directory.CreateDirectory(folder);
-        var root = Path.GetPathRoot(Path.GetFullPath(folder)) ?? folder;
+        string root = Path.GetPathRoot(Path.GetFullPath(folder)) ?? folder;
         return new DriveInfo(root).AvailableFreeSpace;
     }
 
     public static double GetUsedPercent(string folder)
     {
         Directory.CreateDirectory(folder);
-        var root = Path.GetPathRoot(Path.GetFullPath(folder)) ?? folder;
+        string root = Path.GetPathRoot(Path.GetFullPath(folder)) ?? folder;
         var drive = new DriveInfo(root);
         if (drive.TotalSize <= 0)
         {
@@ -41,8 +41,8 @@ public static class DiskUtils
     public static string FormatBytes(long bytes)
     {
         string[] units = ["B", "KB", "MB", "GB", "TB"];
-        var value = (double)bytes;
-        var unit = 0;
+        double value = (double)bytes;
+        int unit = 0;
         while (value >= 1024 && unit < units.Length - 1)
         {
             value /= 1024;

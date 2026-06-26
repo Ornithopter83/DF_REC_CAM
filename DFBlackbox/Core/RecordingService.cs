@@ -54,14 +54,14 @@ public sealed class RecordingService : IDisposable
                 return;
             }
 
-            var clone = frame.Clone();
-            var sizeBytes = EstimateMatBytes(clone);
+            Mat clone = frame.Clone();
+            long sizeBytes = EstimateMatBytes(clone);
             _preBuffer.Enqueue(new BufferedFrame(clone, timestamp, sizeBytes));
             _preBufferBytes += sizeBytes;
             // 이벤트가 확정되기 전 프레임도 일부 보관해 녹화 시작 직전 상황을 함께 남긴다.
             // 메모리 사용량이 커지지 않도록 프레임 수와 추정 바이트 수를 동시에 제한한다.
-            var maxFrames = Math.Max(1, _settings.Detection.PreBufferSeconds * Math.Max(1, _settings.Camera.ActiveFps));
-            var maxBytes = Math.Max(1, _settings.Detection.PreBufferMaxMemoryMB) * 1024L * 1024L;
+            int maxFrames = Math.Max(1, _settings.Detection.PreBufferSeconds * Math.Max(1, _settings.Camera.ActiveFps));
+            long maxBytes = Math.Max(1, _settings.Detection.PreBufferMaxMemoryMB) * 1024L * 1024L;
             while (_preBuffer.Count > maxFrames || _preBufferBytes > maxBytes)
             {
                 DisposeBufferedFrame(_preBuffer.Dequeue());
@@ -203,8 +203,8 @@ public sealed class RecordingService : IDisposable
             return;
         }
 
-        var framesToWrite = 1 + (int)Math.Floor((timestamp - _nextFrameDue).TotalSeconds * _recordingFps);
-        var maxCatchUpFrames = Math.Max(1, _recordingFps * 2);
+        int framesToWrite = 1 + (int)Math.Floor((timestamp - _nextFrameDue).TotalSeconds * _recordingFps);
+        int maxCatchUpFrames = Math.Max(1, _recordingFps * 2);
         if (framesToWrite > maxCatchUpFrames)
         {
             // 카메라 지연이나 UI 정지 뒤에 밀린 프레임을 한꺼번에 복제하면 영상이 튀고 파일이 커진다.
@@ -213,7 +213,7 @@ public sealed class RecordingService : IDisposable
             _nextFrameDue = timestamp;
         }
 
-        for (var i = 0; i < framesToWrite; i++)
+        for (int i = 0; i < framesToWrite; i++)
         {
             WriteMatUnsafe(frame);
             _nextFrameDue += _frameInterval;
@@ -258,10 +258,10 @@ public sealed class RecordingService : IDisposable
 
     private OpenCvSharp.Size GetConfiguredRecordingSize(int frameWidth, int frameHeight)
     {
-        var targetWidth = Math.Max(2, _settings.Camera.ActiveWidth);
-        var targetHeight = Math.Max(2, _settings.Camera.ActiveHeight);
-        var frameAspect = frameWidth / (double)Math.Max(1, frameHeight);
-        var targetAspect = targetWidth / (double)Math.Max(1, targetHeight);
+        int targetWidth = Math.Max(2, _settings.Camera.ActiveWidth);
+        int targetHeight = Math.Max(2, _settings.Camera.ActiveHeight);
+        double frameAspect = frameWidth / (double)Math.Max(1, frameHeight);
+        double targetAspect = targetWidth / (double)Math.Max(1, targetHeight);
         if (Math.Abs(frameAspect - targetAspect) / targetAspect < 0.01)
         {
             return new OpenCvSharp.Size(MakeEven(targetWidth), MakeEven(targetHeight));
@@ -288,9 +288,9 @@ public sealed class RecordingService : IDisposable
     private string CreateUniqueRecordingPrefix(DateTime startTime)
     {
         var recordingFolder = GetRecordingFolder(startTime);
-        var basePrefix = $"{startTime:yyyyMMdd_HHmmss}";
-        var prefix = basePrefix;
-        var index = 1;
+        string basePrefix = $"{startTime:yyyyMMdd_HHmmss}";
+        string prefix = basePrefix;
+        int index = 1;
         while (File.Exists(Path.Combine(recordingFolder, $"{prefix}.mp4"))
             || File.Exists(Path.Combine(recordingFolder, $"{prefix}.recording.mp4"))
             || File.Exists(Path.Combine(recordingFolder, $"{prefix}.crashed.mp4")))
@@ -359,7 +359,7 @@ public sealed class RecordingService : IDisposable
     {
         public static IRecordingWriter Start(string outputPath, int fps, OpenCvSharp.Size size, int bitrateKbps)
         {
-            var ffmpegPath = FfmpegRecordingWriter.ResolveFfmpegPath();
+            string? ffmpegPath = FfmpegRecordingWriter.ResolveFfmpegPath();
             // FFmpeg가 있으면 지정 비트레이트를 정확히 적용하고, 없으면 OpenCV 기본 writer로 녹화만 유지한다.
             return ffmpegPath is not null
                 ? FfmpegRecordingWriter.Start(ffmpegPath, outputPath, fps, bitrateKbps)
@@ -529,7 +529,7 @@ public sealed class RecordingService : IDisposable
 
             if (_process.ExitCode != 0)
             {
-                var detail = _errorOutput.ToString().Trim();
+                string detail = _errorOutput.ToString().Trim();
                 throw new InvalidOperationException(string.IsNullOrWhiteSpace(detail)
                     ? $"FFmpeg 녹화 프로세스가 오류 코드 {_process.ExitCode}로 종료되었습니다."
                     : $"FFmpeg 녹화 프로세스가 오류 코드 {_process.ExitCode}로 종료되었습니다.\n{detail}");
@@ -564,16 +564,16 @@ public sealed class RecordingService : IDisposable
         public static string? ResolveFfmpegPath()
         {
             // 배포 환경마다 위치가 다를 수 있어 실행 폴더, PATH, 단일 exe에 임베드된 리소스 순서로 찾는다.
-            var local = Path.Combine(AppContext.BaseDirectory, "ffmpeg.exe");
+            string local = Path.Combine(AppContext.BaseDirectory, "ffmpeg.exe");
             if (File.Exists(local))
             {
                 return local;
             }
 
-            var pathVariable = Environment.GetEnvironmentVariable("PATH") ?? "";
+            string pathVariable = Environment.GetEnvironmentVariable("PATH") ?? "";
             foreach (var path in pathVariable.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
             {
-                var candidate = Path.Combine(path.Trim(), "ffmpeg.exe");
+                string candidate = Path.Combine(path.Trim(), "ffmpeg.exe");
                 if (File.Exists(candidate))
                 {
                     return candidate;
@@ -598,13 +598,13 @@ public sealed class RecordingService : IDisposable
                 "tools");
             Directory.CreateDirectory(toolsFolder);
 
-            var outputPath = Path.Combine(toolsFolder, "ffmpeg.exe");
+            string outputPath = Path.Combine(toolsFolder, "ffmpeg.exe");
             if (File.Exists(outputPath) && new FileInfo(outputPath).Length == resource.Length)
             {
                 return outputPath;
             }
 
-            var tempPath = outputPath + ".tmp";
+            string tempPath = outputPath + ".tmp";
             using (var file = File.Create(tempPath))
             {
                 resource.CopyTo(file);

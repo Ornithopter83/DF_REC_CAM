@@ -28,12 +28,12 @@ public sealed class SettingsManager
         {
             if (!string.IsNullOrWhiteSpace(LegacySettingsPath) && File.Exists(LegacySettingsPath))
             {
-                var legacySettings = ReadSettings(LegacySettingsPath);
+                AppSettings legacySettings = ReadSettings(LegacySettingsPath);
                 Save(legacySettings);
                 return legacySettings;
             }
 
-            var settings = new AppSettings();
+            AppSettings settings = new AppSettings();
             Save(settings);
             return settings;
         }
@@ -51,14 +51,14 @@ public sealed class SettingsManager
     {
         try
         {
-            var json = File.ReadAllText(path);
-            var settings = JsonSerializer.Deserialize<AppSettings>(json, _jsonOptions) ?? new AppSettings();
+            string json = File.ReadAllText(path);
+            AppSettings settings = JsonSerializer.Deserialize<AppSettings>(json, _jsonOptions) ?? new AppSettings();
             ApplyLegacyRoiNames(json, settings);
             return settings;
         }
         catch
         {
-            var settings = new AppSettings();
+            AppSettings settings = new AppSettings();
             if (string.Equals(path, SettingsPath, StringComparison.OrdinalIgnoreCase))
             {
                 Save(settings);

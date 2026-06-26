@@ -11,7 +11,7 @@ public static class RtspUrlBuilder
             return cam.ManualRtspUrl.Trim();
         }
 
-        var userInfo = "";
+        string userInfo = "";
         if (!string.IsNullOrWhiteSpace(cam.Username))
         {
             userInfo = string.IsNullOrWhiteSpace(cam.Password)
@@ -19,7 +19,7 @@ public static class RtspUrlBuilder
                 : $"{Uri.EscapeDataString(cam.Username)}:{Uri.EscapeDataString(cam.Password)}@";
         }
 
-        var path = cam.StreamPath?.Trim() ?? "";
+        string path = cam.StreamPath?.Trim() ?? "";
         if (!path.StartsWith("/", StringComparison.Ordinal))
         {
             path = "/" + path;

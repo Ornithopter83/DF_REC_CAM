@@ -20,6 +20,7 @@ public sealed class SettingsForm : Form
     private readonly AppSettings _workingSettings;
     private readonly Action? _applySettings;
     private readonly bool _fullModeSelected;
+    private readonly bool _recordingOnlyMode;
     private readonly RadioButton _rdoIpCamera = new() { Text = "IP 카메라", AutoSize = true };
     private readonly RadioButton _rdoUsbCamera = new() { Text = "USB 카메라", AutoSize = true };
     private readonly ComboBox _cmbCameraList = new() { DropDownStyle = ComboBoxStyle.DropDownList };
@@ -58,12 +59,13 @@ public sealed class SettingsForm : Form
     private bool _onvifDiscoveryInProgress;
     private bool _onvifNoCamerasFound;
 
-    public SettingsForm(AppSettings settings, Action? applySettings = null, bool fullModeSelected = false)
+    public SettingsForm(AppSettings settings, Action? applySettings = null, bool fullModeSelected = false, bool recordingOnlyMode = false)
     {
         _settings = settings;
         _workingSettings = CloneSettings(settings);
         _applySettings = applySettings;
         _fullModeSelected = fullModeSelected;
+        _recordingOnlyMode = recordingOnlyMode;
         Text = "DFBlackbox 설정";
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -123,15 +125,21 @@ public sealed class SettingsForm : Form
         panel.Controls.Add(Row(_chkUseManualRtspUrl, _btnOpenWebsite));
         panel.Controls.Add(Row(Labeled("수동 RTSP", _txtManualRtspUrl, WideFieldWidth)));
         panel.Controls.Add(Row(Labeled("RTSP URL", _txtGeneratedRtspUrl, WideFieldWidth)));
-        panel.Controls.Add(Header("감지"));
-        panel.Controls.Add(Row(Labeled("ROI 차이", _numRoiDiffThreshold, 160), Labeled("녹화 정지 대기", _numStopWaitSeconds, 205), Labeled("사전 녹화 버퍼", _numPreBufferSeconds, 195), Labeled("버퍼 최대 MB", _numPreBufferMaxMemory, 195)));
+        var detectionHeader = Header("감지");
+        var detectionRow = Row(Labeled("ROI 차이", _numRoiDiffThreshold, 160), Labeled("녹화 정지 대기", _numStopWaitSeconds, 205), Labeled("사전 녹화 버퍼", _numPreBufferSeconds, 195), Labeled("버퍼 최대 MB", _numPreBufferMaxMemory, 195));
+        panel.Controls.Add(detectionHeader);
+        panel.Controls.Add(detectionRow);
+        HideInRecordingOnlyMode(detectionHeader, detectionRow);
         panel.Controls.Add(Header("녹화"));
         panel.Controls.Add(Row(Labeled("전체 녹화 간격(분)", _numFullIntervalMinutes, 260), Labeled("녹화 비트 전송률", _cmbVideoBitrate, 260), _chkAutoStartFullRecording));
         panel.Controls.Add(Header("저장소"));
         panel.Controls.Add(Row(Labeled("디스크 정지 %", _numDiskStopThreshold, 175), Labeled("디스크 재개 %", _numDiskResumeThreshold, 175), Labeled("녹화 보관일", _numRecRetentionDays, 210), Labeled("정리 시간", _numCleanupHour, 175)));
         panel.Controls.Add(Row(_chkCleanupOnStartup, _chkStartInTray));
-        panel.Controls.Add(Header("오버레이"));
-        panel.Controls.Add(Row(_chkShowRoi, _chkShowDebugText, _chkShowPlaybackRoiOutlines, _chkShowPlaybackDiffMessage, _chkShowPlaybackTrackingCandidate));
+        var overlayHeader = Header("오버레이");
+        var overlayRow = Row(_chkShowRoi, _chkShowDebugText, _chkShowPlaybackRoiOutlines, _chkShowPlaybackDiffMessage, _chkShowPlaybackTrackingCandidate);
+        panel.Controls.Add(overlayHeader);
+        panel.Controls.Add(overlayRow);
+        HideInRecordingOnlyMode(overlayHeader, overlayRow);
         panel.Controls.Add(Buttons());
 
         foreach (var control in new Control[] { _txtIpAddress, _numRtspPort, _numHttpPort, _cmbStreamPath, _chkUseManualRtspUrl, _txtManualRtspUrl })
@@ -148,6 +156,19 @@ public sealed class SettingsForm : Form
         };
         _rdoUsbCamera.CheckedChanged += (_, _) => UpdateCameraTypeUi();
         _rdoIpCamera.CheckedChanged += (_, _) => UpdateCameraTypeUi();
+    }
+
+    private void HideInRecordingOnlyMode(params Control[] controls)
+    {
+        if (!_recordingOnlyMode)
+        {
+            return;
+        }
+
+        foreach (var control in controls)
+        {
+            control.Visible = false;
+        }
     }
 
     private void LoadSettings()
@@ -201,7 +222,7 @@ public sealed class SettingsForm : Form
 
         if (_cmbResolution.SelectedItem is string resolution)
         {
-            var parts = resolution.Split('x');
+            string[] parts = resolution.Split('x');
             if (_workingSettings.Camera.IsIpCamera)
             {
                 _workingSettings.Camera.IpCamera.Width = int.Parse(parts[0]);
@@ -375,7 +396,7 @@ public sealed class SettingsForm : Form
                 _numRtspPort.Value = ClampPort(rtspUri.Port, _numRtspPort);
             }
 
-            var path = rtspUri.PathAndQuery;
+            string path = rtspUri.PathAndQuery;
             if (!string.IsNullOrWhiteSpace(path))
             {
                 if (!_cmbStreamPath.Items.Contains(path))
@@ -393,7 +414,7 @@ public sealed class SettingsForm : Form
 
         if (camera.Width is int width && camera.Height is int height)
         {
-            var resolution = $"{width}x{height}";
+            string resolution = $"{width}x{height}";
             if (_cmbResolution.Items.Contains(resolution))
             {
                 _cmbResolution.SelectedItem = resolution;
@@ -422,7 +443,7 @@ public sealed class SettingsForm : Form
 
     private void UpdateCameraTypeUi()
     {
-        var usb = _rdoUsbCamera.Checked;
+        bool usb = _rdoUsbCamera.Checked;
         _cmbCameraList.Enabled = usb;
         _btnRefreshCamera.Enabled = usb && !_cameraListRefreshInProgress;
         foreach (var control in new Control[] { _txtIpAddress, _numRtspPort, _numHttpPort, _cmbStreamPath, _chkUseManualRtspUrl, _txtGeneratedRtspUrl, _btnOpenWebsite })
@@ -445,14 +466,14 @@ public sealed class SettingsForm : Form
 
     private void OpenCameraWebsite()
     {
-        var ipAddress = _txtIpAddress.Text.Trim();
+        string ipAddress = _txtIpAddress.Text.Trim();
         if (string.IsNullOrWhiteSpace(ipAddress))
         {
             MessageBox.Show(this, "먼저 IP 카메라 주소를 입력하세요.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
-        var url = $"http://{ipAddress}:{(int)_numHttpPort.Value}";
+        string url = $"http://{ipAddress}:{(int)_numHttpPort.Value}";
         Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
     }
 
@@ -488,7 +509,7 @@ public sealed class SettingsForm : Form
 
     private static AppSettings CloneSettings(AppSettings settings)
     {
-        var json = JsonSerializer.Serialize(settings);
+        string json = JsonSerializer.Serialize(settings);
         return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
     }
 

@@ -21,9 +21,9 @@ public sealed record OnvifCameraDiscoveryResult(
 {
     public override string ToString()
     {
-        var port = HttpPort.HasValue ? $":{HttpPort.Value}" : "";
-        var stream = string.IsNullOrWhiteSpace(RtspUri) ? "no RTSP URI" : RtspUri;
-        var profile = string.IsNullOrWhiteSpace(ProfileName) ? "" : $" / {ProfileName}";
+        string port = HttpPort.HasValue ? $":{HttpPort.Value}" : "";
+        string stream = string.IsNullOrWhiteSpace(RtspUri) ? "no RTSP URI" : RtspUri;
+        string profile = string.IsNullOrWhiteSpace(ProfileName) ? "" : $" / {ProfileName}";
         return $"{IpAddress}{port}{profile} / {stream}";
     }
 }
@@ -70,10 +70,10 @@ public sealed class OnvifDiscoveryService
 
     private static async Task<List<string>> ProbeAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
-        var probe = BuildProbeMessage();
-        var payload = Encoding.UTF8.GetBytes(probe);
+        string probe = BuildProbeMessage();
+        byte[] payload = Encoding.UTF8.GetBytes(probe);
         var responses = new List<string>();
-        var deadline = DateTimeOffset.UtcNow.Add(timeout);
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.Add(timeout);
         using var client = new UdpClient(AddressFamily.InterNetwork);
 
         client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
@@ -114,7 +114,7 @@ public sealed class OnvifDiscoveryService
                     continue;
                 }
 
-                var text = Encoding.UTF8.GetString(receiveTask.Result.Buffer);
+                string text = Encoding.UTF8.GetString(receiveTask.Result.Buffer);
                 foreach (var xaddr in ParseXAddrs(text))
                 {
                     if (!responses.Contains(xaddr, StringComparer.OrdinalIgnoreCase))
@@ -143,7 +143,7 @@ public sealed class OnvifDiscoveryService
             return null;
         }
 
-        var mediaUrl = await TryGetMediaServiceUrlAsync(deviceServiceUrl, cancellationToken) ?? deviceServiceUrl;
+        string mediaUrl = await TryGetMediaServiceUrlAsync(deviceServiceUrl, cancellationToken) ?? deviceServiceUrl;
         var profiles = await TryGetProfilesAsync(mediaUrl, cancellationToken);
         var profile = profiles.FirstOrDefault();
         var rtspUri = profile is null ? null : await TryGetStreamUriAsync(mediaUrl, profile.Token, cancellationToken);
@@ -194,8 +194,8 @@ public sealed class OnvifDiscoveryService
 
     private static OnvifProfile ParseProfile(XElement profileElement)
     {
-        var token = profileElement.Attributes().FirstOrDefault(attribute => attribute.Name.LocalName == "token")?.Value ?? "";
-        var name = profileElement.Elements().FirstOrDefault(element => element.Name.LocalName == "Name")?.Value.Trim();
+        string token = profileElement.Attributes().FirstOrDefault(attribute => attribute.Name.LocalName == "token")?.Value ?? "";
+        string? name = profileElement.Elements().FirstOrDefault(element => element.Name.LocalName == "Name")?.Value.Trim();
         var encoder = profileElement.Descendants().FirstOrDefault(element => element.Name.LocalName == "VideoEncoderConfiguration");
         var encoding = encoder?.Elements().FirstOrDefault(element => element.Name.LocalName == "Encoding")?.Value.Trim();
         var resolution = encoder?.Descendants().FirstOrDefault(element => element.Name.LocalName == "Resolution");

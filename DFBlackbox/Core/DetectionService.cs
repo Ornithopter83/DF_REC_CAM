@@ -47,8 +47,8 @@ public sealed class DetectionService : IDisposable
         // 카메라 해상도가 바뀌어도 픽셀 개수가 아니라 비율로 비교하므로 임계값 의미가 유지된다.
         var mainRoiPixels = Cv2.CountNonZero(detectionMask);
         var roiChangedPixels = Cv2.CountNonZero(threshold);
-        var ignoreAreaDiff = 0;
-        var roiDiff = mainRoiPixels <= 0 ? 0 : roiChangedPixels / (double)mainRoiPixels;
+        int ignoreAreaDiff = 0;
+        double roiDiff = mainRoiPixels <= 0 ? 0 : roiChangedPixels / (double)mainRoiPixels;
         result.PersonMotionScore = roiDiff;
         result.RodMotionScore = ignoreAreaDiff;
         result.HomeMotionScore = 0;
@@ -243,7 +243,7 @@ public sealed class DetectionService : IDisposable
 
     private static double MotionRatio(Mat threshold, RoiRect roi)
     {
-        var pixels = CountRoiPixels(threshold, roi);
+        int pixels = CountRoiPixels(threshold, roi);
         if (pixels <= 0)
         {
             return 0;
@@ -274,11 +274,11 @@ public sealed class DetectionService : IDisposable
     {
         // ROI는 설정 당시의 기준 해상도 좌표로 저장된다.
         // 실제 프레임 크기가 바뀌면 모든 ROI의 최대 범위를 기준 좌표계로 보고 현재 프레임에 맞춰 스케일한다.
-        var sourceWidth = Math.Max(1, Math.Max(
+        int sourceWidth = Math.Max(1, Math.Max(
             settings.Camera.ActiveWidth,
             new[] { settings.Rois.PersonWatchRoi, settings.Rois.IgnoreRoi, settings.Rois.RodHomeRoi, roi }
                 .Max(item => item.X + item.Width)));
-        var sourceHeight = Math.Max(1, Math.Max(
+        int sourceHeight = Math.Max(1, Math.Max(
             settings.Camera.ActiveHeight,
             new[] { settings.Rois.PersonWatchRoi, settings.Rois.IgnoreRoi, settings.Rois.RodHomeRoi, roi }
                 .Max(item => item.Y + item.Height)));
@@ -287,8 +287,8 @@ public sealed class DetectionService : IDisposable
             return roi;
         }
 
-        var scaleX = frameWidth / (double)sourceWidth;
-        var scaleY = frameHeight / (double)sourceHeight;
+        double scaleX = frameWidth / (double)sourceWidth;
+        double scaleY = frameHeight / (double)sourceHeight;
         var scaled = new RoiRect
         {
             X = (int)Math.Round(roi.X * scaleX),
@@ -302,10 +302,10 @@ public sealed class DetectionService : IDisposable
 
     private static Rectangle ClampRect(Rectangle rect, int width, int height)
     {
-        var x = Math.Clamp(rect.X, 0, width);
-        var y = Math.Clamp(rect.Y, 0, height);
-        var right = Math.Clamp(rect.Right, 0, width);
-        var bottom = Math.Clamp(rect.Bottom, 0, height);
+        int x = Math.Clamp(rect.X, 0, width);
+        int y = Math.Clamp(rect.Y, 0, height);
+        int right = Math.Clamp(rect.Right, 0, width);
+        int bottom = Math.Clamp(rect.Bottom, 0, height);
         return new Rectangle(x, y, Math.Max(0, right - x), Math.Max(0, bottom - y));
     }
 

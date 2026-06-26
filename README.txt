@@ -136,3 +136,11 @@ Git에서 제외하는 파일
 - `REC`, `Logs`
 - 임시 파일, 로그 파일, `*.recording.mp4`
 - 배포용 로컬 의존성 `ffmpeg.exe`
+
+Codex 작업 방식
+---------------
+
+- Codex 작업 시 `AGENTS.md`, `docs/PROJECT_CONTEXT.md`, `docs/DECISIONS.md`를 먼저 읽습니다.
+- 실제 작업은 `tasks/*.md` 파일을 기준으로 수행합니다.
+- 새 대화로 이주하기 위한 장문 요약을 만들지 않습니다.
+- 작업 완료 후 task 파일의 결과 섹션과 `docs/DECISIONS.md`만 필요한 만큼 갱신합니다.

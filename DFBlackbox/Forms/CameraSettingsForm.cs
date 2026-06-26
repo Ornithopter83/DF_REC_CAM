@@ -42,7 +42,7 @@ public sealed class CameraSettingsForm : Form
         _grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
         Controls.Add(_grid);
 
-        var row = 0;
+        int row = 0;
         foreach (var item in _properties)
         {
             _grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
@@ -71,7 +71,7 @@ public sealed class CameraSettingsForm : Form
             return;
         }
 
-        var value = (double)tag.Item2.Value;
+        double value = (double)tag.Item2.Value;
         _cameraService.SetProperty(tag.Item1.Property, value);
         tag.Item1.Setter(_settings, value);
     }

@@ -20,7 +20,7 @@ public sealed class PlaybackControl : Control
         get => _value;
         set
         {
-            var clamped = Math.Clamp(value, Minimum, Math.Max(Minimum, Maximum));
+            int clamped = Math.Clamp(value, Minimum, Math.Max(Minimum, Maximum));
             if (_value == clamped)
             {
                 return;
@@ -84,12 +84,12 @@ public sealed class PlaybackControl : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        var g = e.Graphics;
+        Graphics g = e.Graphics;
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         g.Clear(Color.Black);
 
-        var contentWidth = Math.Min(Width - 40, 560);
-        var left = (Width - contentWidth) / 2;
+        int contentWidth = Math.Min(Width - 40, 560);
+        int left = (Width - contentWidth) / 2;
         _timelineRect = new Rectangle(left, 24, contentWidth, 18);
         DrawTimeline(g);
         DrawTimeLabels(g, left, contentWidth);
@@ -98,9 +98,9 @@ public sealed class PlaybackControl : Control
 
     private void DrawTimeline(Graphics g)
     {
-        var outer = new Rectangle(_timelineRect.Left, _timelineRect.Top, _timelineRect.Width, _timelineRect.Height);
-        var inner = Rectangle.Inflate(outer, -5, -6);
-        var progressWidth = Maximum <= Minimum
+        Rectangle outer = new Rectangle(_timelineRect.Left, _timelineRect.Top, _timelineRect.Width, _timelineRect.Height);
+        Rectangle inner = Rectangle.Inflate(outer, -5, -6);
+        int progressWidth = Maximum <= Minimum
             ? 0
             : (int)Math.Round(inner.Width * ((Value - Minimum) / (double)(Maximum - Minimum)));
 
@@ -111,7 +111,7 @@ public sealed class PlaybackControl : Control
         FillRoundedRectangle(g, innerBack, inner, inner.Height / 2);
         if (progressWidth > 0)
         {
-            var progress = new Rectangle(inner.Left, inner.Top, Math.Max(3, progressWidth), inner.Height);
+            Rectangle progress = new Rectangle(inner.Left, inner.Top, Math.Max(3, progressWidth), inner.Height);
             FillRoundedRectangle(g, progressBrush, progress, progress.Height / 2);
         }
     }
@@ -121,14 +121,14 @@ public sealed class PlaybackControl : Control
         using var textBrush = new SolidBrush(Color.FromArgb(235, 245, 245, 245));
         using var smallFont = new Font("Segoe UI", 10F, FontStyle.Bold);
         g.DrawString(CurrentTimeText, smallFont, textBrush, left + 12, 48);
-        var totalSize = g.MeasureString(TotalTimeText, smallFont);
+        SizeF totalSize = g.MeasureString(TotalTimeText, smallFont);
         g.DrawString(TotalTimeText, smallFont, textBrush, left + contentWidth - totalSize.Width - 12, 48);
     }
 
     private void DrawButtons(Graphics g, int left, int contentWidth)
     {
-        var centerX = left + contentWidth / 2;
-        var y = 72;
+        int centerX = left + contentWidth / 2;
+        int y = 72;
         _buttonRects[0] = new Rectangle(centerX - 102, y, 46, 46);
         _buttonRects[1] = new Rectangle(centerX - 23, y - 6, 56, 56);
         _buttonRects[2] = new Rectangle(centerX + 66, y, 46, 46);
@@ -143,16 +143,16 @@ public sealed class PlaybackControl : Control
         using var fill = new SolidBrush(Color.FromArgb(155, 130, 130, 130));
         using var hoverFill = new SolidBrush(Color.FromArgb(190, 160, 160, 160));
         using var textBrush = new SolidBrush(Color.White);
-        var mouseOver = rect.Contains(PointToClient(MousePosition));
+        bool mouseOver = rect.Contains(PointToClient(MousePosition));
         g.FillEllipse(mouseOver ? hoverFill : fill, rect);
 
         using var symbolFont = new Font("Segoe UI", symbolSize, FontStyle.Bold);
         using var hintFont = new Font("Segoe UI", hintSize, FontStyle.Bold);
-        var symbolSizeMeasured = g.MeasureString(symbol, symbolFont);
-        var hintSizeMeasured = g.MeasureString(hint, hintFont);
-        var gap = rect.Height >= 54 ? 1 : 0;
-        var totalHeight = symbolSizeMeasured.Height + hintSizeMeasured.Height + gap;
-        var top = rect.Top + (rect.Height - totalHeight) / 2 - 1;
+        SizeF symbolSizeMeasured = g.MeasureString(symbol, symbolFont);
+        SizeF hintSizeMeasured = g.MeasureString(hint, hintFont);
+        int gap = rect.Height >= 54 ? 1 : 0;
+        float totalHeight = symbolSizeMeasured.Height + hintSizeMeasured.Height + gap;
+        float top = rect.Top + (rect.Height - totalHeight) / 2 - 1;
         g.DrawString(
             symbol,
             symbolFont,
@@ -232,9 +232,9 @@ public sealed class PlaybackControl : Control
             return;
         }
 
-        var inner = Rectangle.Inflate(_timelineRect, -5, -6);
-        var ratio = Math.Clamp((x - inner.Left) / (double)Math.Max(1, inner.Width), 0, 1);
-        var requested = Minimum + (int)Math.Round((Maximum - Minimum) * ratio);
+        Rectangle inner = Rectangle.Inflate(_timelineRect, -5, -6);
+        double ratio = Math.Clamp((x - inner.Left) / (double)Math.Max(1, inner.Width), 0, 1);
+        int requested = Minimum + (int)Math.Round((Maximum - Minimum) * ratio);
         SeekRequested?.Invoke(this, requested);
     }
 
@@ -252,8 +252,8 @@ public sealed class PlaybackControl : Control
 
     private static System.Drawing.Drawing2D.GraphicsPath RoundedPath(Rectangle rect, int radius)
     {
-        var path = new System.Drawing.Drawing2D.GraphicsPath();
-        var diameter = radius * 2;
+        System.Drawing.Drawing2D.GraphicsPath path = new System.Drawing.Drawing2D.GraphicsPath();
+        int diameter = radius * 2;
         path.AddArc(rect.Left, rect.Top, diameter, diameter, 180, 90);
         path.AddArc(rect.Right - diameter, rect.Top, diameter, diameter, 270, 90);
         path.AddArc(rect.Right - diameter, rect.Bottom - diameter, diameter, diameter, 0, 90);

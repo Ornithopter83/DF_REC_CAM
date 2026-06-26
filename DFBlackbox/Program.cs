@@ -15,20 +15,27 @@ static class Program
         }
 
         ApplicationConfiguration.Initialize();
-        var startInTray = args.Any(arg =>
-            string.Equals(arg, "--tray", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(arg, "/tray", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(arg, "-tray", StringComparison.OrdinalIgnoreCase))
+        bool startInTray = HasArg(args, "tray")
             || ReadStartInTraySetting();
-        Application.Run(new Forms.MainForm(startInTray));
+        //bool recordingOnlyMode = HasArg(args, "reconly");
+        bool recordingOnlyMode = true;
+        Application.Run(new Forms.MainForm(startInTray, recordingOnlyMode));
         GC.KeepAlive(mutex);
+    }
+
+    private static bool HasArg(IEnumerable<string> args, string name)
+    {
+        return args.Any(arg =>
+            string.Equals(arg, "--" + name, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(arg, "/" + name, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(arg, "-" + name, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool ReadStartInTraySetting()
     {
         try
         {
-            var path = Path.Combine(AppContext.BaseDirectory, "settings.json");
+            string path = Path.Combine(AppContext.BaseDirectory, "settings.json");
             if (!File.Exists(path))
             {
                 return false;

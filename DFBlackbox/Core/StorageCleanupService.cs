@@ -29,7 +29,7 @@ public sealed class StorageCleanupService
             return;
         }
 
-        var cutoff = DateTime.Now - maxAge;
+        DateTime cutoff = DateTime.Now - maxAge;
         foreach (var file in Directory.EnumerateFiles(folder, "*.mp4", SearchOption.AllDirectories))
         {
             if (!includeLocked && IsLocked(file))
@@ -46,8 +46,8 @@ public sealed class StorageCleanupService
 
     private static void EnforceStorageLimit(AppPaths paths, StorageSettings settings, StorageCleanupResult result)
     {
-        var maxBytes = settings.MaxStorageGB * 1024L * 1024L * 1024L;
-        var minFreeBytes = settings.MinFreeDiskGB * 1024L * 1024L * 1024L;
+        long maxBytes = settings.MaxStorageGB * 1024L * 1024L * 1024L;
+        long minFreeBytes = settings.MinFreeDiskGB * 1024L * 1024L * 1024L;
 
         DeleteUntilOk(paths.EventVideos, paths.Root, maxBytes, minFreeBytes, result);
         DeleteUntilOk(paths.ManualVideos, paths.Root, maxBytes, minFreeBytes, result);
@@ -65,8 +65,8 @@ public sealed class StorageCleanupService
                      .Where(file => !IsLocked(file))
                      .OrderBy(File.GetLastWriteTime))
         {
-            var total = DiskUtils.GetFolderSizeBytes(root);
-            var free = DiskUtils.GetFreeDiskBytes(root);
+            long total = DiskUtils.GetFolderSizeBytes(root);
+            long free = DiskUtils.GetFreeDiskBytes(root);
             if (total <= maxBytes && free >= minFreeBytes)
             {
                 return;
@@ -86,7 +86,7 @@ public sealed class StorageCleanupService
     {
         try
         {
-            var bytes = new FileInfo(path).Length;
+            long bytes = new FileInfo(path).Length;
             File.Delete(path);
             result.DeletedFiles++;
             result.FreedBytes += bytes;

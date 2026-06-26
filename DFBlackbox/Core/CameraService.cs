@@ -14,8 +14,8 @@ public sealed class CameraService : IDisposable
 
     public static List<int> FindCameraIndexes(int maxIndex = 10)
     {
-        var indexes = new List<int>();
-        for (var i = 0; i < maxIndex; i++)
+        List<int> indexes = new List<int>();
+        for (int i = 0; i < maxIndex; i++)
         {
             using var capture = new VideoCapture(i);
             if (capture.IsOpened())
@@ -57,7 +57,7 @@ public sealed class CameraService : IDisposable
     public bool OpenIp(IpCameraSettings cam)
     {
         Close();
-        var rtspUrl = RtspUrlBuilder.Build(cam);
+        string rtspUrl = RtspUrlBuilder.Build(cam);
         LastOpenedSource = rtspUrl;
         _capture = new VideoCapture(rtspUrl);
         if (!_capture.IsOpened())
