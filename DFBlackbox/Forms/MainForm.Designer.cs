@@ -3,6 +3,10 @@
 partial class MainForm
 {
     private System.ComponentModel.IContainer components = null;
+    private MenuStrip menuStrip;
+    private ToolStripMenuItem mnuLanguage;
+    private ToolStripMenuItem mnuLanguageKor;
+    private ToolStripMenuItem mnuLanguageEng;
     private PictureBox picCameraPreview;
     private FlowLayoutPanel playbackPanel;
     private PlaybackControl playbackControl;
@@ -77,6 +81,10 @@ partial class MainForm
     private void InitializeComponent()
     {
         components = new System.ComponentModel.Container();
+        menuStrip = new MenuStrip();
+        mnuLanguage = new ToolStripMenuItem();
+        mnuLanguageKor = new ToolStripMenuItem();
+        mnuLanguageEng = new ToolStripMenuItem();
         picCameraPreview = new PictureBox();
         playbackPanel = new FlowLayoutPanel();
         playbackControl = new PlaybackControl();
@@ -149,6 +157,14 @@ partial class MainForm
         ((System.ComponentModel.ISupportInitialize)numHomeMotionThreshold).BeginInit();
         SuspendLayout();
 
+        menuStrip.Items.AddRange(new ToolStripItem[] { mnuLanguage });
+        menuStrip.Name = "menuStrip";
+        menuStrip.Dock = DockStyle.Top;
+        mnuLanguage.DropDownItems.AddRange(new ToolStripItem[] { mnuLanguageKor, mnuLanguageEng });
+        mnuLanguage.Name = "mnuLanguage";
+        mnuLanguageKor.Name = "mnuLanguageKor";
+        mnuLanguageEng.Name = "mnuLanguageEng";
+
         picCameraPreview.BackColor = Color.Black;
         picCameraPreview.Dock = DockStyle.Fill;
         picCameraPreview.Name = "picCameraPreview";
@@ -200,13 +216,13 @@ partial class MainForm
         ConfigureRecordingControls();
         ConfigureStatusLabels();
 
-        sideContentPanel.Controls.Add(MakeHeader("카메라"));
+        sideContentPanel.Controls.Add(MakeHeader("Main.Camera"));
         sideContentPanel.Controls.Add(MakeRowPanel(btnConnectCamera, btnDisconnectCamera));
         sideContentPanel.Controls.Add(MakeRowPanel(btnOpenCamera, btnCloseCamera));
         sideContentPanel.Controls.Add(btnLoadVideoFile);
         sideContentPanel.Controls.Add(btnSaveHomeReference);
         sideContentPanel.Controls.Add(btnWatchToggle);
-        sideContentPanel.Controls.Add(MakeSectionLabel("녹화 / 저장소"));
+        sideContentPanel.Controls.Add(MakeSectionLabel("Main.RecordStorage"));
         sideContentPanel.Controls.Add(MakeRowPanel(rdoManualRecording, rdoAutoRecording, rdoFullRecording));
         sideContentPanel.Controls.Add(MakeRowPanel(btnStartRecording, btnStopRecording));
         sideContentPanel.Controls.Add(MakeRowPanel(btnOpenStorageFolder, btnSettings));
@@ -221,12 +237,14 @@ partial class MainForm
         Controls.Add(picCameraPreview);
         Controls.Add(sidePanel);
         Controls.Add(statusStrip);
+        Controls.Add(menuStrip);
 
         AutoScaleDimensions = new SizeF(7F, 15F);
         AutoScaleMode = AutoScaleMode.Font;
         ClientSize = new Size(1440, 760);
         KeyPreview = true;
         Location = new Point(10, 10);
+        MainMenuStrip = menuStrip;
         MinimumSize = new Size(1140, 560);
         Name = "MainForm";
         StartPosition = FormStartPosition.Manual;
@@ -384,17 +402,19 @@ partial class MainForm
         lblErrorStatus.Text = "오류: 없음";
     }
 
-    private static Label MakeHeader(string text) => new()
+    private static Label MakeHeader(string key) => new()
     {
-        Text = text,
+        Text = DFBlackbox.Utils.Localization.T(key),
+        Tag = key,
         AutoSize = true,
         Font = new Font("Segoe UI", 10F, FontStyle.Bold),
         Margin = new Padding(0, 4, 0, 4)
     };
 
-    private static Label MakeSectionLabel(string text) => new()
+    private static Label MakeSectionLabel(string key) => new()
     {
-        Text = text,
+        Text = DFBlackbox.Utils.Localization.T(key),
+        Tag = key,
         AutoSize = true,
         Font = new Font("Segoe UI", 9F, FontStyle.Bold),
         Margin = new Padding(0, 14, 0, 3)

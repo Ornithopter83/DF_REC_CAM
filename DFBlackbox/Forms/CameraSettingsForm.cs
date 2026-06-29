@@ -1,5 +1,6 @@
 using DFBlackbox.Core;
 using DFBlackbox.Models;
+using DFBlackbox.Utils;
 using OpenCvSharp;
 
 namespace DFBlackbox.Forms;
@@ -15,20 +16,20 @@ public sealed class CameraSettingsForm : Form
     {
         _cameraService = cameraService;
         _settings = settings;
-        Text = "카메라 속성";
+        Text = Localization.T("CameraProps.Title");
         Width = 520;
         Height = 360;
         KeyPreview = true;
 
         _properties = new()
         {
-            ["노출"] = (VideoCaptureProperties.Exposure, s => s.Exposure, (s, v) => s.Exposure = v),
-            ["게인"] = (VideoCaptureProperties.Gain, s => s.Gain, (s, v) => s.Gain = v),
-            ["밝기"] = (VideoCaptureProperties.Brightness, s => s.Brightness, (s, v) => s.Brightness = v),
-            ["대비"] = (VideoCaptureProperties.Contrast, s => s.Contrast, (s, v) => s.Contrast = v),
-            ["채도"] = (VideoCaptureProperties.Saturation, s => s.Saturation, (s, v) => s.Saturation = v),
-            ["화이트밸런스"] = (VideoCaptureProperties.WhiteBalanceBlueU, s => s.WhiteBalance, (s, v) => s.WhiteBalance = v),
-            ["초점"] = (VideoCaptureProperties.Focus, s => s.Focus, (s, v) => s.Focus = v)
+            [Localization.T("CameraProps.Exposure")] = (VideoCaptureProperties.Exposure, s => s.Exposure, (s, v) => s.Exposure = v),
+            [Localization.T("CameraProps.Gain")] = (VideoCaptureProperties.Gain, s => s.Gain, (s, v) => s.Gain = v),
+            [Localization.T("CameraProps.Brightness")] = (VideoCaptureProperties.Brightness, s => s.Brightness, (s, v) => s.Brightness = v),
+            [Localization.T("CameraProps.Contrast")] = (VideoCaptureProperties.Contrast, s => s.Contrast, (s, v) => s.Contrast = v),
+            [Localization.T("CameraProps.Saturation")] = (VideoCaptureProperties.Saturation, s => s.Saturation, (s, v) => s.Saturation = v),
+            [Localization.T("CameraProps.WhiteBalance")] = (VideoCaptureProperties.WhiteBalanceBlueU, s => s.WhiteBalance, (s, v) => s.WhiteBalance = v),
+            [Localization.T("CameraProps.Focus")] = (VideoCaptureProperties.Focus, s => s.Focus, (s, v) => s.Focus = v)
         };
 
         Build();
@@ -55,7 +56,7 @@ public sealed class CameraSettingsForm : Form
                 Value = (decimal)Math.Clamp(value, -100000, 100000),
                 Dock = DockStyle.Fill
             };
-            var apply = new Button { Text = "적용", Dock = DockStyle.Fill, Tag = (item.Value, input) };
+            var apply = new Button { Text = Localization.T("Button.Apply"), Dock = DockStyle.Fill, Tag = (item.Value, input) };
             apply.Click += Apply_Click;
             _grid.Controls.Add(new Label { Text = item.Key, TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill }, 0, row);
             _grid.Controls.Add(input, 1, row);

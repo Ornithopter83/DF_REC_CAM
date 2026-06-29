@@ -12,17 +12,13 @@ public sealed class SettingsForm : Form
     private const int WideFieldWidth = 780;
     private const int HalfFieldWidth = 340;
     private const int QuarterFieldWidth = 190;
-    private const string OnvifInitialText = "먼저 카메라 찾기 버튼을 누르세요";
-    private const string OnvifNoCameraText = "카메라 없음";
-    private const string OnvifSearchingText = "카메라 탐색 중";
-
     private readonly AppSettings _settings;
     private readonly AppSettings _workingSettings;
     private readonly Action? _applySettings;
     private readonly bool _fullModeSelected;
     private readonly bool _recordingOnlyMode;
-    private readonly RadioButton _rdoIpCamera = new() { Text = "IP 카메라", AutoSize = true };
-    private readonly RadioButton _rdoUsbCamera = new() { Text = "USB 카메라", AutoSize = true };
+    private readonly RadioButton _rdoIpCamera = new() { Text = Localization.T("Main.IpCamera"), AutoSize = true };
+    private readonly RadioButton _rdoUsbCamera = new() { Text = Localization.T("Main.UsbCamera"), AutoSize = true };
     private readonly ComboBox _cmbCameraList = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly ComboBox _cmbResolution = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly ComboBox _cmbFps = new() { DropDownStyle = ComboBoxStyle.DropDownList };
@@ -30,12 +26,12 @@ public sealed class SettingsForm : Form
     private readonly NumericUpDown _numRtspPort = new() { Minimum = 1, Maximum = 65535, Value = 554 };
     private readonly NumericUpDown _numHttpPort = new() { Minimum = 1, Maximum = 65535, Value = 80 };
     private readonly ComboBox _cmbStreamPath = new() { DropDownStyle = ComboBoxStyle.DropDown };
-    private readonly CheckBox _chkUseManualRtspUrl = new() { Text = "수동 RTSP URL 사용", AutoSize = true };
-    private readonly Button _btnOpenWebsite = new() { Text = "웹 설정", Width = 100, Height = 28 };
+    private readonly CheckBox _chkUseManualRtspUrl = new() { Text = Localization.T("Main.ManualRtsp"), AutoSize = true };
+    private readonly Button _btnOpenWebsite = new() { Text = Localization.T("Settings.Web"), Width = 100, Height = 28 };
     private readonly TextBox _txtManualRtspUrl = new();
     private readonly TextBox _txtGeneratedRtspUrl = new() { ReadOnly = true };
-    private readonly Button _btnRefreshCamera = new() { Text = "새로고침" };
-    private readonly Button _btnFindOnvifCamera = new() { Text = "카메라 찾기", Width = 110, Height = 28 };
+    private readonly Button _btnRefreshCamera = new() { Text = Localization.T("Settings.Refresh") };
+    private readonly Button _btnFindOnvifCamera = new() { Text = Localization.T("Settings.FindCamera"), Width = 110, Height = 28 };
     private readonly ComboBox _cmbOnvifCameras = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly NumericUpDown _numRoiDiffThreshold = new() { DecimalPlaces = 3, Increment = 0.005M, Minimum = 0, Maximum = 10 };
     private readonly NumericUpDown _numStopWaitSeconds = new() { Minimum = 1, Maximum = 10 };
@@ -45,16 +41,19 @@ public sealed class SettingsForm : Form
     private readonly NumericUpDown _numDiskResumeThreshold = new() { Minimum = 1, Maximum = 100 };
     private readonly NumericUpDown _numRecRetentionDays = new() { Minimum = 1, Maximum = 3650 };
     private readonly NumericUpDown _numCleanupHour = new() { Minimum = 0, Maximum = 23 };
-    private readonly CheckBox _chkCleanupOnStartup = new() { Text = "시작 시 정리", AutoSize = true };
-    private readonly CheckBox _chkStartInTray = new() { Text = "트레이에서 시작", AutoSize = true };
-    private readonly CheckBox _chkShowRoi = new() { Text = "ROI / 제외 ROI", AutoSize = true };
-    private readonly CheckBox _chkShowDebugText = new() { Text = "디버그 텍스트", AutoSize = true };
-    private readonly CheckBox _chkShowPlaybackRoiOutlines = new() { Text = "재생 ROI 외곽선", AutoSize = true };
-    private readonly CheckBox _chkShowPlaybackDiffMessage = new() { Text = "재생 차이 메시지", AutoSize = true };
-    private readonly CheckBox _chkShowPlaybackTrackingCandidate = new() { Text = "재생 추적 후보", AutoSize = true };
+    private readonly CheckBox _chkCleanupOnStartup = new() { Text = Localization.T("Settings.CleanupOnStartup"), AutoSize = true };
+    private readonly CheckBox _chkStartInTray = new() { Text = Localization.T("Settings.StartInTray"), AutoSize = true };
+    private readonly CheckBox _chkShowRoi = new() { Text = Localization.T("Main.Roi"), AutoSize = true };
+    private readonly CheckBox _chkShowDebugText = new() { Text = Localization.T("Main.DebugText"), AutoSize = true };
+    private readonly CheckBox _chkShowPlaybackRoiOutlines = new() { Text = Localization.T("Settings.PlaybackRoi"), AutoSize = true };
+    private readonly CheckBox _chkShowPlaybackDiffMessage = new() { Text = Localization.T("Settings.PlaybackDiff"), AutoSize = true };
+    private readonly CheckBox _chkShowPlaybackTrackingCandidate = new() { Text = Localization.T("Settings.PlaybackTracking"), AutoSize = true };
+    private readonly RadioButton _rdoPlaybackOptimizeBalanced = new() { Text = Localization.T("Settings.PlaybackOptimizeBalanced"), AutoSize = true };
+    private readonly RadioButton _rdoPlaybackOptimizePlayback = new() { Text = Localization.T("Settings.PlaybackOptimizePlayback"), AutoSize = true };
+    private readonly RadioButton _rdoPlaybackOptimizeTracking = new() { Text = Localization.T("Settings.PlaybackOptimizeTracking"), AutoSize = true };
     private readonly NumericUpDown _numFullIntervalMinutes = new() { Minimum = 1, Maximum = 1440 };
     private readonly ComboBox _cmbVideoBitrate = new() { DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly CheckBox _chkAutoStartFullRecording = new() { Text = "앱 시작 시 전체 녹화 시작", AutoSize = true };
+    private readonly CheckBox _chkAutoStartFullRecording = new() { Text = Localization.T("Settings.AutoStartFull"), AutoSize = true };
     private bool _cameraListRefreshInProgress;
     private bool _onvifDiscoveryInProgress;
     private bool _onvifNoCamerasFound;
@@ -66,7 +65,7 @@ public sealed class SettingsForm : Form
         _applySettings = applySettings;
         _fullModeSelected = fullModeSelected;
         _recordingOnlyMode = recordingOnlyMode;
-        Text = "DFBlackbox 설정";
+        Text = Localization.T("Settings.Title");
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -76,7 +75,7 @@ public sealed class SettingsForm : Form
 
         Build();
         LoadSettings();
-        SetOnvifComboMessage(OnvifInitialText, enabled: true);
+        SetOnvifComboMessage(Localization.T("Settings.OnvifInitial"), enabled: true);
         UpdateCameraTypeUi();
         UpdateRtspPreview();
     }
@@ -97,9 +96,9 @@ public sealed class SettingsForm : Form
         _cmbFps.Items.AddRange(new object[] { "60", "30", "15", "10", "5" });
         _cmbVideoBitrate.Items.AddRange(new object[]
         {
-            new BitrateOption("낮음 (320 kbps)", 320),
-            new BitrateOption("보통 (800 kbps)", 800),
-            new BitrateOption("높음 (2.5 Mbps)", 2500)
+            new BitrateOption(Localization.IsEnglish ? "Low (320 kbps)" : "낮음 (320 kbps)", 320),
+            new BitrateOption(Localization.IsEnglish ? "Normal (800 kbps)" : "보통 (800 kbps)", 800),
+            new BitrateOption(Localization.IsEnglish ? "High (2.5 Mbps)" : "높음 (2.5 Mbps)", 2500)
         });
         _cmbStreamPath.Items.AddRange(new object[]
         {
@@ -111,35 +110,37 @@ public sealed class SettingsForm : Form
             "/cam/realmonitor?channel=1&subtype=0"
         });
 
-        panel.Controls.Add(Header("카메라"));
+        panel.Controls.Add(Header(Localization.T("Settings.Camera")));
         panel.Controls.Add(Row(_rdoIpCamera, _rdoUsbCamera));
         _btnRefreshCamera.Click += async (_, _) => await RefreshCameraListAsync();
-        panel.Controls.Add(Row(Labeled("USB", _cmbCameraList, HalfFieldWidth), _btnRefreshCamera, Labeled("해상도", _cmbResolution, 220), Labeled("FPS", _cmbFps, 130)));
-        panel.Controls.Add(Header("IP 카메라"));
+        panel.Controls.Add(Row(Labeled("USB", _cmbCameraList, HalfFieldWidth), _btnRefreshCamera, Labeled(Localization.IsEnglish ? "Resolution" : "해상도", _cmbResolution, 220), Labeled("FPS", _cmbFps, 130)));
+        panel.Controls.Add(Header(Localization.T("Settings.IpCamera")));
         panel.Controls.Add(Row(Labeled("IP", _txtIpAddress, HalfFieldWidth), Labeled("RTSP", _numRtspPort, 190), Labeled("HTTP", _numHttpPort, 190)));
         _btnFindOnvifCamera.Click += async (_, _) => await FindOnvifCameraAsync();
         _cmbOnvifCameras.SelectionChangeCommitted += (_, _) => ApplySelectedOnvifCamera();
         panel.Controls.Add(Row(_btnFindOnvifCamera, _cmbOnvifCameras));
-        panel.Controls.Add(Row(Labeled("경로", _cmbStreamPath, WideFieldWidth)));
+        panel.Controls.Add(Row(Labeled(Localization.T("Settings.Path"), _cmbStreamPath, WideFieldWidth)));
         _btnOpenWebsite.Click += (_, _) => OpenCameraWebsite();
         panel.Controls.Add(Row(_chkUseManualRtspUrl, _btnOpenWebsite));
-        panel.Controls.Add(Row(Labeled("수동 RTSP", _txtManualRtspUrl, WideFieldWidth)));
-        panel.Controls.Add(Row(Labeled("RTSP URL", _txtGeneratedRtspUrl, WideFieldWidth)));
-        var detectionHeader = Header("감지");
-        var detectionRow = Row(Labeled("ROI 차이", _numRoiDiffThreshold, 160), Labeled("녹화 정지 대기", _numStopWaitSeconds, 205), Labeled("사전 녹화 버퍼", _numPreBufferSeconds, 195), Labeled("버퍼 최대 MB", _numPreBufferMaxMemory, 195));
+        panel.Controls.Add(Row(Labeled(Localization.T("Settings.ManualRtsp"), _txtManualRtspUrl, WideFieldWidth)));
+        panel.Controls.Add(Row(Labeled(Localization.T("Settings.RtspUrl"), _txtGeneratedRtspUrl, WideFieldWidth)));
+        var detectionHeader = Header(Localization.T("Settings.Detection"));
+        var detectionRow = Row(Labeled(Localization.T("Settings.RoiDiff"), _numRoiDiffThreshold, 160), Labeled(Localization.T("Settings.StopWait"), _numStopWaitSeconds, 205), Labeled(Localization.T("Settings.PreBuffer"), _numPreBufferSeconds, 195), Labeled(Localization.T("Settings.BufferMax"), _numPreBufferMaxMemory, 195));
         panel.Controls.Add(detectionHeader);
         panel.Controls.Add(detectionRow);
         HideInRecordingOnlyMode(detectionHeader, detectionRow);
-        panel.Controls.Add(Header("녹화"));
-        panel.Controls.Add(Row(Labeled("전체 녹화 간격(분)", _numFullIntervalMinutes, 260), Labeled("녹화 비트 전송률", _cmbVideoBitrate, 260), _chkAutoStartFullRecording));
-        panel.Controls.Add(Header("저장소"));
-        panel.Controls.Add(Row(Labeled("디스크 정지 %", _numDiskStopThreshold, 175), Labeled("디스크 재개 %", _numDiskResumeThreshold, 175), Labeled("녹화 보관일", _numRecRetentionDays, 210), Labeled("정리 시간", _numCleanupHour, 175)));
+        panel.Controls.Add(Header(Localization.T("Settings.Recording")));
+        panel.Controls.Add(Row(Labeled(Localization.T("Settings.FullInterval"), _numFullIntervalMinutes, 260), Labeled(Localization.T("Settings.Bitrate"), _cmbVideoBitrate, 260), _chkAutoStartFullRecording));
+        panel.Controls.Add(Header(Localization.T("Settings.Storage")));
+        panel.Controls.Add(Row(Labeled(Localization.T("Settings.DiskStop"), _numDiskStopThreshold, 175), Labeled(Localization.T("Settings.DiskResume"), _numDiskResumeThreshold, 175), Labeled(Localization.T("Settings.Retention"), _numRecRetentionDays, 210), Labeled(Localization.T("Settings.CleanupHour"), _numCleanupHour, 175)));
         panel.Controls.Add(Row(_chkCleanupOnStartup, _chkStartInTray));
-        var overlayHeader = Header("오버레이");
+        var overlayHeader = Header(Localization.T("Settings.Overlay"));
         var overlayRow = Row(_chkShowRoi, _chkShowDebugText, _chkShowPlaybackRoiOutlines, _chkShowPlaybackDiffMessage, _chkShowPlaybackTrackingCandidate);
+        var playbackOptimizationRow = Row(Labeled(Localization.T("Settings.PlaybackOptimization"), _rdoPlaybackOptimizeBalanced, 180), _rdoPlaybackOptimizePlayback, _rdoPlaybackOptimizeTracking);
         panel.Controls.Add(overlayHeader);
         panel.Controls.Add(overlayRow);
-        HideInRecordingOnlyMode(overlayHeader, overlayRow);
+        panel.Controls.Add(playbackOptimizationRow);
+        HideInRecordingOnlyMode(overlayHeader, overlayRow, playbackOptimizationRow);
         panel.Controls.Add(Buttons());
 
         foreach (var control in new Control[] { _txtIpAddress, _numRtspPort, _numHttpPort, _cmbStreamPath, _chkUseManualRtspUrl, _txtManualRtspUrl })
@@ -202,6 +203,10 @@ public sealed class SettingsForm : Form
         _chkShowPlaybackRoiOutlines.Checked = _workingSettings.Overlay.ShowPlaybackRoiOutlines;
         _chkShowPlaybackDiffMessage.Checked = _workingSettings.Overlay.ShowPlaybackDiffMessage;
         _chkShowPlaybackTrackingCandidate.Checked = _workingSettings.Overlay.ShowPlaybackTrackingCandidate;
+        string playbackMode = _workingSettings.Overlay.PlaybackOptimizationMode;
+        _rdoPlaybackOptimizePlayback.Checked = string.Equals(playbackMode, "Playback", StringComparison.OrdinalIgnoreCase);
+        _rdoPlaybackOptimizeTracking.Checked = string.Equals(playbackMode, "Tracking", StringComparison.OrdinalIgnoreCase);
+        _rdoPlaybackOptimizeBalanced.Checked = !_rdoPlaybackOptimizePlayback.Checked && !_rdoPlaybackOptimizeTracking.Checked;
     }
 
     private void SaveSettings()
@@ -267,6 +272,11 @@ public sealed class SettingsForm : Form
         _workingSettings.Overlay.ShowPlaybackRoiOutlines = _chkShowPlaybackRoiOutlines.Checked;
         _workingSettings.Overlay.ShowPlaybackDiffMessage = _chkShowPlaybackDiffMessage.Checked;
         _workingSettings.Overlay.ShowPlaybackTrackingCandidate = _chkShowPlaybackTrackingCandidate.Checked;
+        _workingSettings.Overlay.PlaybackOptimizationMode = _rdoPlaybackOptimizePlayback.Checked
+            ? "Playback"
+            : _rdoPlaybackOptimizeTracking.Checked
+                ? "Tracking"
+                : "Balanced";
     }
 
     private async Task RefreshCameraListAsync()
@@ -327,8 +337,8 @@ public sealed class SettingsForm : Form
         _onvifDiscoveryInProgress = true;
         _onvifNoCamerasFound = false;
         _btnFindOnvifCamera.Enabled = false;
-        _btnFindOnvifCamera.Text = "찾는 중...";
-        SetOnvifComboMessage(OnvifSearchingText, enabled: true);
+        _btnFindOnvifCamera.Text = Localization.T("Settings.Searching");
+        SetOnvifComboMessage(Localization.T("Settings.OnvifSearching"), enabled: true);
 
         List<OnvifCameraDiscoveryResult> cameras;
         try
@@ -354,19 +364,19 @@ public sealed class SettingsForm : Form
 
         if (_cmbOnvifCameras.Items.Count > 0)
         {
-            _cmbOnvifCameras.Items.Insert(0, $"{_cmbOnvifCameras.Items.Count} 카메라 탐색");
+            _cmbOnvifCameras.Items.Insert(0, Localization.T("Settings.OnvifFound", _cmbOnvifCameras.Items.Count));
             _cmbOnvifCameras.SelectedIndex = 0;
             _cmbOnvifCameras.Enabled = true;
         }
         else
         {
             _onvifNoCamerasFound = true;
-            SetOnvifComboMessage(OnvifNoCameraText, enabled: false);
-            MessageBox.Show(this, "로컬 네트워크에서 ONVIF 카메라를 찾지 못했습니다.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            SetOnvifComboMessage(Localization.T("Settings.OnvifNone"), enabled: false);
+            MessageBox.Show(this, Localization.T("Settings.OnvifNotFound"), "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         _onvifDiscoveryInProgress = false;
-        _btnFindOnvifCamera.Text = "카메라 찾기";
+        _btnFindOnvifCamera.Text = Localization.T("Settings.FindCamera");
         UpdateCameraTypeUi();
     }
 
@@ -469,7 +479,7 @@ public sealed class SettingsForm : Form
         string ipAddress = _txtIpAddress.Text.Trim();
         if (string.IsNullOrWhiteSpace(ipAddress))
         {
-            MessageBox.Show(this, "먼저 IP 카메라 주소를 입력하세요.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, Localization.T("Settings.EnterIp"), "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -479,14 +489,14 @@ public sealed class SettingsForm : Form
 
     private Control Buttons()
     {
-        var ok = Button("확인", (_, _) =>
+        var ok = Button(Localization.T("Button.OK"), (_, _) =>
         {
             ApplySettings();
             DialogResult = DialogResult.OK;
             Close();
         });
-        var apply = Button("적용", (_, _) => ApplySettings());
-        var cancel = Button("취소", (_, _) =>
+        var apply = Button(Localization.T("Button.Apply"), (_, _) => ApplySettings());
+        var cancel = Button(Localization.T("Button.Cancel"), (_, _) =>
         {
             DialogResult = DialogResult.Cancel;
             Close();
@@ -521,6 +531,7 @@ public sealed class SettingsForm : Form
         target.Overlay = CloneSettings(source).Overlay;
         target.Storage = CloneSettings(source).Storage;
         target.Recording = CloneSettings(source).Recording;
+        target.Language = source.Language;
     }
 
     private static Label Header(string text) => new()

@@ -53,6 +53,7 @@ public sealed class SettingsManager
         {
             string json = File.ReadAllText(path);
             AppSettings settings = JsonSerializer.Deserialize<AppSettings>(json, _jsonOptions) ?? new AppSettings();
+            settings.Language = Localization.NormalizeLanguage(settings.Language);
             ApplyLegacyRoiNames(json, settings);
             return settings;
         }

@@ -34,7 +34,7 @@ public sealed partial class MainForm : Form
     private double _minHomeDiffScore = double.MaxValue;
     private DateTime _lastFrameAt = DateTime.MinValue;
     private DateTime _lastDiskStatusAt = DateTime.MinValue;
-    private string _cachedDiskStatus = "디스크: 알 수 없음";
+    private string _cachedDiskStatus = Localization.T("Status.DiskUnknown");
     private int _consecutiveFrameFailures;
     private readonly FpsCounter _algorithmFpsCounter = new();
     private double _lastAlgorithmMs;
@@ -64,12 +64,19 @@ public sealed partial class MainForm : Form
     private bool _playbackPlaying;
     private string _playbackPath = "";
     private VideoCapture? _playbackCapture;
+    private readonly object _playbackCaptureSync = new();
+    private readonly object _playbackBufferSync = new();
+    private readonly Queue<PlaybackFrame> _playbackBuffer = new();
     private CancellationTokenSource? _playbackPlayCts;
+    private CancellationTokenSource? _playbackDecodeCts;
+    private Task? _playbackDecodeTask;
     private int _playbackFrameIndex;
     private int _playbackFrameCount;
+    private int _playbackDecodeNextFrameIndex;
     private double _playbackFps = 30;
     private double _playbackDurationSeconds;
     private bool _updatingPlaybackTimeline;
+    private DateTime _lastPlaybackStatusUpdateAt = DateTime.MinValue;
     private bool _cameraListRefreshInProgress;
     private bool _applyingSettingsToUi;
     private bool _settingsDialogOpen;
@@ -85,7 +92,18 @@ public sealed partial class MainForm : Form
     private FullScreenHintControl? _fullScreenHint;
     private System.Windows.Forms.Timer? _fullScreenHintTimer;
     private DateTime _fullScreenHintStartedAt;
+    private VideoDropState _videoDropState = VideoDropState.None;
     private const double OverlayReferenceHeight = 1080.0;
+    private const int PlaybackBufferCapacity = 10;
+    private const int PlaybackStatusUpdateMilliseconds = 200;
+    private static readonly HashSet<string> SupportedVideoExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp4",
+        ".avi",
+        ".mov",
+        ".mkv",
+        ".wmv"
+    };
 
     private enum RoiEditMode
     {
@@ -108,6 +126,40 @@ public sealed partial class MainForm : Form
         IgnoreRoi
     }
 
+    private enum VideoDropState
+    {
+        None,
+        Accepted,
+        Rejected
+    }
+
+    private sealed class PlaybackFrame : IDisposable
+    {
+        public int Index { get; }
+        private Bitmap? Bitmap { get; set; }
+        public DetectionResult Result { get; }
+
+        public PlaybackFrame(int index, Bitmap bitmap, DetectionResult result)
+        {
+            Index = index;
+            Bitmap = bitmap;
+            Result = result;
+        }
+
+        public void Dispose()
+        {
+            Bitmap?.Dispose();
+            Bitmap = null;
+        }
+
+        public Bitmap TakeBitmap()
+        {
+            Bitmap bitmap = Bitmap ?? throw new ObjectDisposedException(nameof(PlaybackFrame));
+            Bitmap = null;
+            return bitmap;
+        }
+    }
+
     public MainForm(bool startInTray = false, bool recordingOnlyMode = false)
     {
         _startInTray = startInTray;
@@ -122,7 +174,7 @@ public sealed partial class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"시작 실패: {ex.Message}", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, Localization.T("Msg.StartFailed", ex.Message), "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -183,6 +235,8 @@ public sealed partial class MainForm : Form
         KeyDown += MainForm_KeyDown;
         sidePanel.SizeChanged += (_, _) => PositionPlaybackPanel();
         btnRefreshCamera.Click += async (_, _) => await RefreshCameraListAsync();
+        mnuLanguageKor.Click += (_, _) => ChangeLanguage(Localization.Korean);
+        mnuLanguageEng.Click += (_, _) => ChangeLanguage(Localization.English);
         btnApplyCamera.Click += (_, _) => SaveSettingsOnly();
         btnWatchToggle.Click += (_, _) => ToggleWatching();
         btnDefaultSettings.Click += (_, _) => ResetDefaults();
@@ -203,6 +257,12 @@ public sealed partial class MainForm : Form
         playbackControl.NextClicked += (_, _) => StepPlaybackFrame(1);
         playbackControl.SeekRequested += (_, frameIndex) => SeekPlaybackFrame(frameIndex);
         numPersonThreshold.ValueChanged += (_, _) => ReadDetectionSettingsFromUi();
+        picCameraPreview.AllowDrop = true;
+        picCameraPreview.DragEnter += PreviewVideo_DragEnter;
+        picCameraPreview.DragOver += PreviewVideo_DragOver;
+        picCameraPreview.DragLeave += PreviewVideo_DragLeave;
+        picCameraPreview.DragDrop += PreviewVideo_DragDrop;
+        picCameraPreview.Paint += PicCameraPreview_Paint;
         picCameraPreview.MouseDown += PicCameraPreview_MouseDown;
         picCameraPreview.MouseMove += PicCameraPreview_MouseMove;
         picCameraPreview.MouseUp += PicCameraPreview_MouseUp;
@@ -263,10 +323,12 @@ public sealed partial class MainForm : Form
         string legacySettingsRoot = _paths.Root;
         _settingsManager = new SettingsManager(AppContext.BaseDirectory, legacySettingsRoot);
         _settings = _settingsManager.Load();
+        Localization.SetLanguage(_settings.Language);
         _startInTray |= _settings.Storage.StartInTray;
         _paths = new AppPaths(_settings.Storage);
         _paths.Ensure();
         _settingsManager = new SettingsManager(AppContext.BaseDirectory, legacySettingsRoot);
+        InitializeTrayIcon();
         _logger = new Logger(_paths.Logs);
         _eventLogService = new EventLogService(_paths.EventLogPath);
         _stateMachine = new BlackboxStateMachine(_settings);
@@ -278,9 +340,10 @@ public sealed partial class MainForm : Form
         _detectionService.LoadHomeReference(_paths.HomeReferencePath);
         ApplySettingsToUi();
         _cleanupService.Cleanup(_settings.Storage);
-        lblCameraStatus.Text = "카메라: 준비";
-        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? "RTSP: 연결 안 됨" : "RTSP: 해당 없음";
-        lblLastFrame.Text = "마지막 프레임: 없음";
+        ApplyLocalization();
+        lblCameraStatus.Text = Localization.T("Status.CameraReady");
+        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? Localization.T("Status.RtspDisconnected") : Localization.T("Status.RtspNone");
+        lblLastFrame.Text = Localization.T("Status.LastFrameNone");
         UpdateControlStates();
         ScheduleAutoStartFullRecording();
     }
@@ -310,9 +373,75 @@ public sealed partial class MainForm : Form
             Visible = false,
             ContextMenuStrip = new ContextMenuStrip()
         };
-        _trayIcon.ContextMenuStrip.Items.Add("열기", null, (_, _) => RestoreFromTray());
-        _trayIcon.ContextMenuStrip.Items.Add("종료", null, (_, _) => Close());
+        _trayIcon.ContextMenuStrip.Items.Add(Localization.T("Tray.Open"), null, (_, _) => RestoreFromTray());
+        _trayIcon.ContextMenuStrip.Items.Add(Localization.T("Tray.Exit"), null, (_, _) => Close());
         _trayIcon.DoubleClick += (_, _) => RestoreFromTray();
+    }
+
+    private void ChangeLanguage(string language)
+    {
+        _settings.Language = Localization.NormalizeLanguage(language);
+        Localization.SetLanguage(_settings.Language);
+        _settingsManager.Save(_settings);
+        InitializeTrayIcon();
+        _cachedDiskStatus = Localization.T("Status.DiskUnknown");
+        _lastDiskStatusAt = DateTime.MinValue;
+        ApplyLocalization();
+        UpdateControlStates();
+        RedrawPlaybackFrameIfActive();
+    }
+
+    private void ApplyLocalization()
+    {
+        Text = "DFBlackbox";
+        mnuLanguage.Text = Localization.T("Menu.Language");
+        mnuLanguageKor.Text = Localization.T("Menu.Korean");
+        mnuLanguageEng.Text = Localization.T("Menu.English");
+        mnuLanguageKor.Checked = string.Equals(_settings.Language, Localization.Korean, StringComparison.OrdinalIgnoreCase);
+        mnuLanguageEng.Checked = string.Equals(_settings.Language, Localization.English, StringComparison.OrdinalIgnoreCase);
+
+        rdoIpCamera.Text = Localization.T("Main.IpCamera");
+        rdoUsbCamera.Text = Localization.T("Main.UsbCamera");
+        chkUseManualRtspUrl.Text = Localization.T("Main.ManualRtsp");
+        btnRefreshCamera.Text = Localization.T("Main.RefreshCamera");
+        btnApplyCamera.Text = Localization.T("Main.Save");
+        btnWatchToggle.Text = _isWatching ? Localization.T("Main.WatchStop") : Localization.T("Main.WatchStart");
+        btnDefaultSettings.Text = Localization.T("Main.Defaults");
+        btnConnectCamera.Text = Localization.T("Main.Connect");
+        btnDisconnectCamera.Text = Localization.T("Main.Disconnect");
+        btnOpenCamera.Text = Localization.T("Main.OpenCamera");
+        btnCloseCamera.Text = Localization.T("Main.CloseCamera");
+        btnLoadVideoFile.Text = Localization.T("Main.LoadVideo");
+        btnSettings.Text = Localization.T("Main.Settings");
+        btnOpenStorageFolder.Text = Localization.T("Main.Storage");
+        rdoManualRecording.Text = Localization.T("Main.Manual");
+        rdoAutoRecording.Text = Localization.T("Main.Auto");
+        rdoFullRecording.Text = Localization.T("Main.Full");
+        btnStartRecording.Text = Localization.T("Main.StartRecording");
+        btnStopRecording.Text = Localization.T("Main.StopRecording");
+        btnSaveHomeReference.Text = Localization.T("Main.SaveBaseline");
+        btnOpenEventList.Text = Localization.T("Main.RecentEvents");
+        chkShowPersonBox.Text = Localization.T("Main.MotionBox");
+        chkShowMotionMask.Text = Localization.T("Main.MotionBox");
+        chkShowRodRoi.Text = Localization.T("Main.Roi");
+        chkShowHomeRoi.Text = "ROI";
+        chkShowDebugText.Text = Localization.T("Main.DebugText");
+        chkShowRecordingStatus.Text = Localization.T("Main.RecordingStateOverlay");
+
+        foreach (Control control in sideContentPanel.Controls)
+        {
+            if (control is Label { Tag: string key } label)
+            {
+                label.Text = Localization.T(key);
+            }
+        }
+
+        if (_fullScreenHint is not null)
+        {
+            _fullScreenHint.Text = Localization.T("FullScreen.Hint");
+        }
+
+        picCameraPreview.Invalidate();
     }
 
     private void ApplySettingsToUi()
@@ -400,7 +529,7 @@ public sealed partial class MainForm : Form
         btnRefreshCamera.Enabled = false;
         if (rdoUsbCamera.Checked)
         {
-            lblCameraStatus.Text = "카메라: USB 검색 중";
+            lblCameraStatus.Text = Localization.T("Status.CameraUsbScanning");
         }
 
         List<int> indexes;
@@ -412,7 +541,7 @@ public sealed partial class MainForm : Form
         {
             indexes = [];
             _logger?.Error(ex, "USB camera scan failed");
-            lblErrorStatus.Text = $"오류: USB 카메라 검색 실패 ({ex.Message})";
+            lblErrorStatus.Text = Localization.T("Status.Error", $"USB camera scan failed ({ex.Message})");
         }
 
         if (IsDisposed)
@@ -438,7 +567,7 @@ public sealed partial class MainForm : Form
             cmbCameraList.Text = "";
             if (rdoUsbCamera.Checked)
             {
-                lblCameraStatus.Text = "카메라: USB 카메라 없음";
+                lblCameraStatus.Text = Localization.T("Status.CameraUsbNone");
             }
         }
 
@@ -455,14 +584,14 @@ public sealed partial class MainForm : Form
             ReadDetectionSettingsFromUi();
             ReadRecordingSettingsFromUi();
             _settingsManager.Save(_settings);
-            lblCameraStatus.Text = "설정: 저장됨";
-            MessageBox.Show(this, "설정을 저장했습니다.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            lblCameraStatus.Text = Localization.T("Status.SettingsSaved");
+            MessageBox.Show(this, Localization.T("Msg.SettingsSaved"), "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
             _logger?.Error(ex, "Saving settings failed");
-            lblErrorStatus.Text = $"오류: {ex.Message}";
-            MessageBox.Show(this, $"설정 저장에 실패했습니다.\n\n{ex.Message}", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            lblErrorStatus.Text = Localization.T("Status.Error", ex.Message);
+            MessageBox.Show(this, Localization.T("Msg.SettingsSaveFailed", ex.Message), "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -470,17 +599,20 @@ public sealed partial class MainForm : Form
     {
         if (_recordingService?.IsRecording == true)
         {
-            MessageBox.Show(this, "기본값으로 되돌리기 전에 녹화를 정지하세요.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, Localization.T("Msg.StopRecordingBeforeDefaults"), "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
-        _settings = new AppSettings();
+        string currentLanguage = _settings.Language;
+        _settings = new AppSettings { Language = currentLanguage };
         _stateMachine = new BlackboxStateMachine(_settings) { AutoRecordingEnabled = false };
         _detectionService.ResetBackground();
         _detectionService.LoadBaselineReference(_paths.BaselineReferencePath);
         ApplySettingsToUi();
         _settingsManager.Save(_settings);
-        lblCameraStatus.Text = "기본값: 복원됨";
+        Localization.SetLanguage(_settings.Language);
+        ApplyLocalization();
+        lblCameraStatus.Text = Localization.T("Status.DefaultsRestored");
         UpdateControlStates();
     }
 
@@ -500,14 +632,14 @@ public sealed partial class MainForm : Form
         _isWatching = watching && !rdoFullRecording.Checked && IsCameraPreviewOpen();
         if (_isWatching)
         {
-            lblDetectionStatus.Text = File.Exists(_paths.BaselineReferencePath) ? "감지: 감시 중" : "감지: 기준 없음";
+            lblDetectionStatus.Text = File.Exists(_paths.BaselineReferencePath) ? Localization.T("Status.DetectionWatching") : Localization.T("Status.DetectionNoBaseline");
         }
         else
         {
-            lblDetectionStatus.Text = "감지: 수동";
+            lblDetectionStatus.Text = Localization.T("Status.DetectionManual");
         }
 
-        btnWatchToggle.Text = _isWatching ? "감시 정지" : "감시 시작";
+        btnWatchToggle.Text = _isWatching ? Localization.T("Main.WatchStop") : Localization.T("Main.WatchStart");
         _stateMachine.AutoRecordingEnabled = _isWatching && rdoAutoRecording.Checked;
         UpdateControlStates();
     }
@@ -517,7 +649,7 @@ public sealed partial class MainForm : Form
         ExitPlaybackMode(clearPreview: true);
         if (_recordingService?.IsRecording == true)
         {
-            MessageBox.Show(this, "녹화 중입니다. 카메라 연결을 변경하기 전에 녹화를 정지하세요.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, Localization.T("Msg.StopRecordingBeforeCameraChange"), "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
@@ -525,7 +657,7 @@ public sealed partial class MainForm : Form
         ReadCameraSettingsFromUi();
         if (!_settings.Camera.IsIpCamera && !await EnsureUsbCameraSelectedAsync())
         {
-            lblCameraStatus.Text = "카메라: USB 카메라 없음";
+            lblCameraStatus.Text = Localization.T("Status.CameraUsbNone");
             UpdateControlStates();
             return;
         }
@@ -533,14 +665,14 @@ public sealed partial class MainForm : Form
         ReadDetectionSettingsFromUi();
         _settingsManager.Save(_settings);
         btnConnectCamera.Enabled = false;
-        lblCameraStatus.Text = "카메라: 연결 중";
-        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? "RTSP: 연결 중" : "RTSP: 해당 없음";
+        lblCameraStatus.Text = Localization.T("Status.CameraConnecting");
+        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? Localization.T("Status.RtspConnecting") : Localization.T("Status.RtspNone");
         bool opened = await Task.Run(() => _cameraService.Open(_settings));
         btnConnectCamera.Enabled = true;
         _lastFrameAt = DateTime.Now;
         _consecutiveFrameFailures = 0;
         lblCameraStatus.Text = opened ? GetCameraStatusText() : GetCameraErrorText();
-        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? $"RTSP: {_cameraService.ConnectionState}" : "RTSP: 해당 없음";
+        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? $"RTSP: {_cameraService.ConnectionState}" : Localization.T("Status.RtspNone");
         UpdateControlStates();
     }
 
@@ -550,9 +682,9 @@ public sealed partial class MainForm : Form
         StopRecordingIfActive(DateTime.Now);
         _cameraService.Close();
         SetWatching(false);
-        lblCameraStatus.Text = "카메라: 연결 해제됨";
-        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? "RTSP: 연결 해제됨" : "RTSP: 해당 없음";
-        lblLastFrame.Text = "마지막 프레임: 없음";
+        lblCameraStatus.Text = Localization.T("Status.CameraDisconnected");
+        lblRtspStatus.Text = _settings.Camera.IsIpCamera ? Localization.T("Status.RtspClosed") : Localization.T("Status.RtspNone");
+        lblLastFrame.Text = Localization.T("Status.LastFrameNone");
         UpdateControlStates();
     }
 
@@ -583,7 +715,7 @@ public sealed partial class MainForm : Form
         Image? old = picCameraPreview.Image;
         picCameraPreview.Image = null;
         old?.Dispose();
-        lblCameraStatus.Text = _cameraService.IsOpened ? $"{GetCameraStatusText()} / 닫힘" : "카메라: 닫힘";
+        lblCameraStatus.Text = _cameraService.IsOpened ? $"{GetCameraStatusText()} / closed" : Localization.T("Status.CameraClosed");
         UpdateControlStates();
     }
 
@@ -591,8 +723,8 @@ public sealed partial class MainForm : Form
     {
         using var dialog = new OpenFileDialog
         {
-            Title = "녹화 영상 불러오기",
-            Filter = "영상 파일|*.mp4;*.avi;*.mov;*.mkv;*.wmv|모든 파일|*.*",
+            Title = Localization.T("Main.LoadRecordingTitle"),
+            Filter = Localization.T("Main.VideoFileFilter"),
             InitialDirectory = Directory.Exists(_paths.RecVideos) ? _paths.RecVideos : AppContext.BaseDirectory
         };
 
@@ -604,16 +736,143 @@ public sealed partial class MainForm : Form
         await EnterPlaybackModeAsync(dialog.FileName);
     }
 
+    private void PreviewVideo_DragEnter(object? sender, DragEventArgs e)
+    {
+        UpdateVideoDragState(e);
+    }
+
+    private void PreviewVideo_DragOver(object? sender, DragEventArgs e)
+    {
+        UpdateVideoDragState(e);
+    }
+
+    private void PreviewVideo_DragLeave(object? sender, EventArgs e)
+    {
+        SetVideoDropVisualState(VideoDropState.None);
+        picCameraPreview.Update();
+    }
+
+    private async void PreviewVideo_DragDrop(object? sender, DragEventArgs e)
+    {
+        try
+        {
+            bool supported = TryGetSingleDroppedVideoFile(e.Data, out string filePath);
+            e.Effect = supported ? DragDropEffects.Copy : DragDropEffects.None;
+            SetVideoDropVisualState(VideoDropState.None);
+            picCameraPreview.Update();
+            if (!supported)
+            {
+                lblCameraStatus.Text = Localization.T("Status.VideoDropRejected");
+                return;
+            }
+
+            await EnterPlaybackModeAsync(filePath);
+            if (_isPlaybackMode && !_playbackPlaying)
+            {
+                TogglePlayback();
+            }
+        }
+        catch (Exception ex)
+        {
+            SetVideoDropVisualState(VideoDropState.None);
+            _logger?.Error(ex, "Video drag-and-drop playback failed");
+            lblErrorStatus.Text = Localization.T("Status.Error", ex.Message);
+        }
+    }
+
+    private void UpdateVideoDragState(DragEventArgs e)
+    {
+        VideoDropState state = TryGetSingleDroppedVideoFile(e.Data, out _)
+            ? VideoDropState.Accepted
+            : VideoDropState.Rejected;
+        e.Effect = state == VideoDropState.Accepted ? DragDropEffects.Copy : DragDropEffects.None;
+        SetVideoDropVisualState(state);
+    }
+
+    private static bool TryGetSingleDroppedVideoFile(IDataObject? data, out string filePath)
+    {
+        filePath = "";
+        if (data is null || !data.GetDataPresent(DataFormats.FileDrop))
+        {
+            return false;
+        }
+
+        if (data.GetData(DataFormats.FileDrop) is not string[] files || files.Length != 1)
+        {
+            return false;
+        }
+
+        string candidate = files[0];
+        if (string.IsNullOrWhiteSpace(candidate) || !File.Exists(candidate) || !IsSupportedVideoFile(candidate))
+        {
+            return false;
+        }
+
+        filePath = candidate;
+        return true;
+    }
+
+    private static bool IsSupportedVideoFile(string filePath)
+    {
+        return SupportedVideoExtensions.Contains(Path.GetExtension(filePath));
+    }
+
+    private void SetVideoDropVisualState(VideoDropState state)
+    {
+        _videoDropState = state;
+        Cursor cursor = state switch
+        {
+            VideoDropState.Accepted => Cursors.Hand,
+            VideoDropState.Rejected => Cursors.No,
+            _ => Cursors.Default
+        };
+        picCameraPreview.Cursor = cursor;
+        picCameraPreview.Invalidate();
+    }
+
+    private void PicCameraPreview_Paint(object? sender, PaintEventArgs e)
+    {
+        if (_videoDropState == VideoDropState.None)
+        {
+            return;
+        }
+
+        e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+
+        bool accepted = _videoDropState == VideoDropState.Accepted;
+        Color accent = accepted ? Color.FromArgb(30, 170, 95) : Color.FromArgb(210, 55, 65);
+        string text = accepted
+            ? Localization.T("Main.VideoDropReady")
+            : Localization.T("Main.VideoDropRejected");
+        using var fill = new SolidBrush(Color.FromArgb(92, accent));
+        using var border = new Pen(Color.FromArgb(235, accent), 6F);
+        using var shadow = new SolidBrush(Color.FromArgb(190, Color.Black));
+        using var foreground = new SolidBrush(Color.White);
+        using var font = new Font("Malgun Gothic", 24F, FontStyle.Bold);
+
+        Rectangle bounds = picCameraPreview.ClientRectangle;
+        e.Graphics.FillRectangle(fill, bounds);
+        Rectangle borderRect = Rectangle.Inflate(bounds, -8, -8);
+        e.Graphics.DrawRectangle(border, borderRect);
+
+        SizeF textSize = e.Graphics.MeasureString(text, font);
+        float x = (bounds.Width - textSize.Width) / 2F;
+        float y = (bounds.Height - textSize.Height) / 2F;
+        e.Graphics.DrawString(text, font, shadow, x + 2, y + 2);
+        e.Graphics.DrawString(text, font, foreground, x, y);
+    }
+
     private async Task EnterPlaybackModeAsync(string filePath)
     {
         await DisconnectCameraAsync();
         ExitPlaybackMode(clearPreview: false);
 
-        var capture = new VideoCapture(filePath);
+        VideoCapture capture = OpenPlaybackCapture(filePath);
         if (!capture.IsOpened())
         {
             capture.Dispose();
-            MessageBox.Show(this, "Could not open the selected video file.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, Localization.T("Msg.CouldNotOpenVideo"), "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
@@ -632,17 +891,39 @@ public sealed partial class MainForm : Form
         playbackPanel.BringToFront();
         playbackControl.IsPlaying = false;
         playbackControl.Value = 0;
-        lblCameraStatus.Text = "재생: 불러옴";
-        lblRtspStatus.Text = $"File: {Path.GetFileName(filePath)}";
+        lblCameraStatus.Text = Localization.T("Status.PlaybackLoaded");
+        lblRtspStatus.Text = Localization.T("Status.File", Path.GetFileName(filePath));
         ShowPlaybackFrame(0);
         UpdateControlStates();
+    }
+
+    private VideoCapture OpenPlaybackCapture(string filePath)
+    {
+        var capture = new VideoCapture();
+        try
+        {
+            // OpenCV CAP_PROP_HW_ACCELERATION / CAP_PROP_HW_ACCELERATION_USE_OPENCL.
+            // Backend support varies; failures are ignored and software decode remains the fallback.
+            capture.Set((VideoCaptureProperties)50, 1);
+            capture.Set((VideoCaptureProperties)52, 1);
+        }
+        catch
+        {
+        }
+
+        capture.Open(filePath);
+        return capture;
     }
 
     private void ExitPlaybackMode(bool clearPreview)
     {
         StopPlaybackLoop();
-        _playbackCapture?.Dispose();
-        _playbackCapture = null;
+        lock (_playbackCaptureSync)
+        {
+            _playbackCapture?.Dispose();
+            _playbackCapture = null;
+        }
+
         _isPlaybackMode = false;
         _playbackPlaying = false;
         _playbackPath = "";
@@ -911,10 +1192,20 @@ public sealed partial class MainForm : Form
         _playbackPlayCts?.Cancel();
         _playbackPlayCts?.Dispose();
         _playbackPlayCts = null;
+        _playbackDecodeCts?.Cancel();
+        _playbackDecodeCts?.Dispose();
+        _playbackDecodeCts = null;
+        ClearPlaybackBuffer();
     }
 
     private async Task RunPlaybackLoopAsync(CancellationToken token)
     {
+        if (UseBufferedPlayback())
+        {
+            await RunBufferedPlaybackLoopAsync(token);
+            return;
+        }
+
         try
         {
             double intervalMs = Math.Clamp(1000.0 / Math.Max(1, _playbackFps), 1, 200);
@@ -932,20 +1223,212 @@ public sealed partial class MainForm : Form
                 nextFrameAtMs += intervalMs;
                 double delayMs = nextFrameAtMs - stopwatch.Elapsed.TotalMilliseconds;
                 // WinForms Timer 대신 Stopwatch 기준 누적 시각을 맞춰 장시간 재생 시 드리프트를 줄인다.
-                // 처리 시간이 프레임 간격보다 길면 대기하지 않고 다음 루프로 넘겨 UI 응답성을 유지한다.
+                // 처리 시간이 프레임 간격보다 길어도 최소 대기 시간을 둬 WM_PAINT가 화면을 갱신할 틈을 준다.
                 if (delayMs > 1)
                 {
                     await Task.Delay(TimeSpan.FromMilliseconds(delayMs), token);
                 }
                 else
                 {
-                    await Task.Yield();
+                    await Task.Delay(1, token);
                 }
             }
         }
         catch (OperationCanceledException)
         {
         }
+    }
+
+    private bool UseBufferedPlayback()
+    {
+        return _isPlaybackMode
+            && !IsPlaybackTrackingFirst()
+            && (!ShouldDrawPlaybackOverlay() || IsPlaybackFirst());
+    }
+
+    private bool IsPlaybackFirst()
+    {
+        return string.Equals(_settings.Overlay.PlaybackOptimizationMode, "Playback", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsPlaybackTrackingFirst()
+    {
+        return string.Equals(_settings.Overlay.PlaybackOptimizationMode, "Tracking", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task RunBufferedPlaybackLoopAsync(CancellationToken token)
+    {
+        _playbackDecodeCts?.Cancel();
+        _playbackDecodeCts?.Dispose();
+        _playbackDecodeCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+        _playbackDecodeNextFrameIndex = _playbackFrameIndex + 1;
+        _playbackDecodeTask = Task.Run(() => FillPlaybackBufferAsync(_playbackDecodeCts.Token), _playbackDecodeCts.Token);
+
+        try
+        {
+            double intervalMs = Math.Clamp(1000.0 / Math.Max(1, _playbackFps), 1, 200);
+            var stopwatch = Stopwatch.StartNew();
+            int startIndex = _playbackFrameIndex;
+
+            while (!token.IsCancellationRequested && _isPlaybackMode && _playbackPlaying)
+            {
+                int targetIndex = startIndex + Math.Max(1, (int)Math.Floor(stopwatch.Elapsed.TotalMilliseconds / intervalMs));
+                if (_playbackFrameCount > 0)
+                {
+                    targetIndex = Math.Min(targetIndex, _playbackFrameCount - 1);
+                }
+
+                PlaybackFrame? frame = DequeuePlaybackFrame(targetIndex);
+                if (frame is null)
+                {
+                    if (_playbackFrameCount > 0 && _playbackFrameIndex >= _playbackFrameCount - 1)
+                    {
+                        _playbackPlaying = false;
+                        playbackControl.IsPlaying = false;
+                        break;
+                    }
+
+                    await Task.Delay(1, token);
+                    continue;
+                }
+
+                using (frame)
+                {
+                    ApplyBufferedPlaybackFrame(frame);
+                }
+
+                if (_playbackFrameCount > 0 && _playbackFrameIndex >= _playbackFrameCount - 1)
+                {
+                    _playbackPlaying = false;
+                    playbackControl.IsPlaying = false;
+                    break;
+                }
+
+                await Task.Delay(1, token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task FillPlaybackBufferAsync(CancellationToken token)
+    {
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                if (_playbackFrameCount > 0 && _playbackDecodeNextFrameIndex >= _playbackFrameCount)
+                {
+                    return;
+                }
+
+                if (GetPlaybackBufferCount() >= PlaybackBufferCapacity)
+                {
+                    await Task.Delay(1, token);
+                    continue;
+                }
+
+                PlaybackFrame? frame = ReadBufferedPlaybackFrame(_playbackDecodeNextFrameIndex);
+                if (frame is null)
+                {
+                    return;
+                }
+
+                lock (_playbackBufferSync)
+                {
+                    if (_playbackBuffer.Count < PlaybackBufferCapacity)
+                    {
+                        _playbackBuffer.Enqueue(frame);
+                        _playbackDecodeNextFrameIndex = frame.Index + 1;
+                    }
+                    else
+                    {
+                        frame.Dispose();
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(ex, "Buffered playback decode failed");
+        }
+    }
+
+    private PlaybackFrame? ReadBufferedPlaybackFrame(int frameIndex)
+    {
+        if (_playbackCapture is null)
+        {
+            return null;
+        }
+
+        using var capturedFrame = new Mat();
+        bool read;
+        lock (_playbackCaptureSync)
+        {
+            if (_playbackCapture is null)
+            {
+                return null;
+            }
+
+            read = _playbackCapture.Read(capturedFrame);
+        }
+
+        if (!read || capturedFrame.Empty())
+        {
+            return null;
+        }
+
+        DetectionResult result = CreateBypassDetectionResult(DateTime.Now);
+        Bitmap bitmap = BitmapConverter.ToBitmap(capturedFrame);
+        return new PlaybackFrame(frameIndex, bitmap, result);
+    }
+
+    private int GetPlaybackBufferCount()
+    {
+        lock (_playbackBufferSync)
+        {
+            return _playbackBuffer.Count;
+        }
+    }
+
+    private PlaybackFrame? DequeuePlaybackFrame(int targetIndex)
+    {
+        lock (_playbackBufferSync)
+        {
+            PlaybackFrame? selected = null;
+            while (_playbackBuffer.Count > 0 && _playbackBuffer.Peek().Index <= targetIndex)
+            {
+                selected?.Dispose();
+                selected = _playbackBuffer.Dequeue();
+            }
+
+            return selected;
+        }
+    }
+
+    private void ClearPlaybackBuffer()
+    {
+        lock (_playbackBufferSync)
+        {
+            while (_playbackBuffer.Count > 0)
+            {
+                _playbackBuffer.Dequeue().Dispose();
+            }
+        }
+    }
+
+    private void ApplyBufferedPlaybackFrame(PlaybackFrame frame)
+    {
+        _playbackFrameIndex = frame.Index;
+        _lastFrameAt = DateTime.Now;
+        Image? old = picCameraPreview.Image;
+        picCameraPreview.Image = frame.TakeBitmap();
+        old?.Dispose();
+        UpdatePlaybackInfoThrottled(force: _playbackFrameIndex >= Math.Max(0, _playbackFrameCount - 1));
     }
 
     private void StepPlaybackFrame(int delta)
@@ -999,11 +1482,26 @@ public sealed partial class MainForm : Form
         {
             // 사용자가 드래그/스텝 이동할 때만 명시 seek를 수행한다.
             // 일반 재생 중에는 순차 Read를 유지해야 일부 코덱에서 프레임 건너뜀과 속도 저하가 적다.
-            _playbackCapture.Set(VideoCaptureProperties.PosFrames, frameIndex);
+            ClearPlaybackBuffer();
+            lock (_playbackCaptureSync)
+            {
+                _playbackCapture?.Set(VideoCaptureProperties.PosFrames, frameIndex);
+            }
         }
 
         using var capturedFrame = new Mat();
-        if (!_playbackCapture.Read(capturedFrame) || capturedFrame.Empty())
+        bool read;
+        lock (_playbackCaptureSync)
+        {
+            if (_playbackCapture is null)
+            {
+                return;
+            }
+
+            read = _playbackCapture.Read(capturedFrame);
+        }
+
+        if (!read || capturedFrame.Empty())
         {
             _playbackPlaying = false;
             StopPlaybackLoop();
@@ -1011,15 +1509,21 @@ public sealed partial class MainForm : Form
             return;
         }
 
-        using var frame = capturedFrame.Clone();
         _playbackFrameIndex = frameIndex;
-        SetLatestFrame(frame);
         _lastFrameAt = DateTime.Now;
         var result = ShouldRunPlaybackAlgorithm()
-            ? AnalyzeFrame(frame, DateTime.Now)
+            ? AnalyzeFrame(capturedFrame, DateTime.Now)
             : CreateBypassDetectionResult(DateTime.Now);
-        using var preview = ShouldDrawPlaybackOverlay() ? DrawOverlay(frame, result) : frame.Clone();
-        UpdatePreview(preview, result);
+        if (ShouldDrawPlaybackOverlay())
+        {
+            using var preview = DrawOverlay(capturedFrame, result);
+            UpdatePreview(preview, result);
+        }
+        else
+        {
+            UpdatePreview(capturedFrame, result);
+        }
+
         UpdatePlaybackInfo();
         UpdatePlaybackTimeline();
     }
@@ -1036,11 +1540,16 @@ public sealed partial class MainForm : Form
 
     private bool ShouldRunPlaybackAlgorithm()
     {
-        return ShouldDrawPlaybackOverlay();
+        return !IsPlaybackFirst() && ShouldDrawPlaybackOverlay();
     }
 
     private bool ShouldDrawPlaybackOverlay()
     {
+        if (IsPlaybackFirst())
+        {
+            return false;
+        }
+
         return (_settings.Overlay.ShowRodRoi && _settings.Overlay.ShowPlaybackRoiOutlines)
             || (_settings.Overlay.ShowRodRoi && _settings.Overlay.ShowPlaybackDiffMessage)
             || (_settings.Overlay.ShowRodRoi && _settings.Overlay.ShowPlaybackTrackingCandidate)
@@ -1058,6 +1567,23 @@ public sealed partial class MainForm : Form
                 : 0;
         playbackControl.SetPosition(_playbackFrameIndex, FormatPlaybackTime(time), FormatPlaybackTime(totalSeconds));
         lblRtspStatus.Text = $"File: {Path.GetFileName(_playbackPath)}  Frame {_playbackFrameIndex + 1}/{total}";
+    }
+
+    private void UpdatePlaybackInfoThrottled(bool force = false)
+    {
+        DateTime now = DateTime.Now;
+        if (!force && now - _lastPlaybackStatusUpdateAt < TimeSpan.FromMilliseconds(PlaybackStatusUpdateMilliseconds))
+        {
+            return;
+        }
+
+        _lastPlaybackStatusUpdateAt = now;
+        _fpsCounter.Tick();
+        UpdatePlaybackInfo();
+        UpdatePlaybackTimeline();
+        lblFps.Text = Localization.T("Status.Fps", _fpsCounter.CurrentFps);
+        lblCameraStatus.Text = _playbackPlaying ? Localization.T("Status.PlaybackPlaying") : Localization.T("Status.PlaybackPaused");
+        lblRecordingStatus.Text = Localization.T("Status.RecordingPlayback");
     }
 
     private void ConfigurePlaybackTimeline()
@@ -1156,7 +1682,7 @@ public sealed partial class MainForm : Form
                         }
 
                         _recordingService.StartRecording(now, stateResult.TriggerReason, frame);
-                        ShowRecordingStamp("Recording started", Color.FromArgb(24, 132, 74));
+                        ShowRecordingStamp(Localization.T("Stamp.RecordingStarted"), Color.FromArgb(24, 132, 74));
                         _currentRecordingStartedAt = now;
                         _currentTriggerReason = stateResult.TriggerReason;
                         _maxMotionScore = 0;
@@ -1176,7 +1702,7 @@ public sealed partial class MainForm : Form
                     if (stateResult.ShouldStopRecording && !_fullRecordingRequested)
                     {
                         string filePath = _recordingService.StopRecording(now);
-                        ShowRecordingStamp("Recording stopped", Color.FromArgb(192, 92, 24));
+                        ShowRecordingStamp(Localization.T("Stamp.RecordingStopped"), Color.FromArgb(192, 92, 24));
                         SaveEventLog(filePath, now);
                         _stateMachine.CompleteRecording(now);
                         BeginInvoke(UpdateControlStates);
@@ -1195,7 +1721,7 @@ public sealed partial class MainForm : Form
             catch (Exception ex)
             {
                 _logger.Error(ex, "Capture loop failed");
-                BeginInvoke(() => lblErrorStatus.Text = $"오류: {ex.Message}");
+                BeginInvoke(() => lblErrorStatus.Text = Localization.T("Status.Error", ex.Message));
                 await Task.Delay(500, token);
             }
         }
@@ -1209,8 +1735,8 @@ public sealed partial class MainForm : Form
             _cameraService.MarkReconnecting();
             BeginInvoke(() =>
             {
-                lblCameraStatus.Text = "카메라: 재연결 중";
-                lblRtspStatus.Text = _settings.Camera.IsIpCamera ? "RTSP: 재연결 중" : "RTSP: 해당 없음";
+                lblCameraStatus.Text = Localization.T("Status.CameraReconnecting");
+                lblRtspStatus.Text = _settings.Camera.IsIpCamera ? Localization.T("Status.RtspReconnecting") : Localization.T("Status.RtspNone");
             });
             _cameraService.Close();
             await Task.Delay(TimeSpan.FromSeconds(_settings.Camera.ReconnectDelaySeconds), token);
@@ -1218,7 +1744,7 @@ public sealed partial class MainForm : Form
             BeginInvoke(() =>
             {
                 lblCameraStatus.Text = opened ? GetCameraStatusText() : GetCameraErrorText();
-                lblRtspStatus.Text = _settings.Camera.IsIpCamera ? $"RTSP: {_cameraService.ConnectionState}" : "RTSP: 해당 없음";
+                lblRtspStatus.Text = _settings.Camera.IsIpCamera ? $"RTSP: {_cameraService.ConnectionState}" : Localization.T("Status.RtspNone");
             });
             _lastFrameAt = DateTime.Now;
             _consecutiveFrameFailures = 0;
@@ -1397,8 +1923,17 @@ public sealed partial class MainForm : Form
         }
 
         _fpsCounter.Tick();
-        using var displayPreview = CreateOverlayCanvas(preview);
-        var bitmap = BitmapConverter.ToBitmap(displayPreview);
+        Bitmap bitmap;
+        if (_isPlaybackMode && !ShouldDrawPlaybackOverlay())
+        {
+            bitmap = BitmapConverter.ToBitmap(preview);
+        }
+        else
+        {
+            using var displayPreview = CreateOverlayCanvas(preview);
+            bitmap = BitmapConverter.ToBitmap(displayPreview);
+        }
+
         DrawActiveRecordingStamp(bitmap);
         DrawRecordingStamp(bitmap);
         if (IsDisposed || !IsHandleCreated)
@@ -1434,32 +1969,32 @@ public sealed partial class MainForm : Form
         Image? old = picCameraPreview.Image;
         picCameraPreview.Image = bitmap;
         old?.Dispose();
-        lblFps.Text = $"FPS: {_fpsCounter.CurrentFps:0.0}";
+        lblFps.Text = Localization.T("Status.Fps", _fpsCounter.CurrentFps);
         if (_isPlaybackMode)
         {
-            lblCameraStatus.Text = _playbackPlaying ? "재생: 재생 중" : "재생: 일시정지";
-            lblRtspStatus.Text = $"파일: {Path.GetFileName(_playbackPath)}";
-            lblLastFrame.Text = _playbackFrameCount > 0 ? $"프레임: {_playbackFrameIndex + 1}/{_playbackFrameCount}" : $"프레임: {_playbackFrameIndex + 1}";
+            lblCameraStatus.Text = _playbackPlaying ? Localization.T("Status.PlaybackPlaying") : Localization.T("Status.PlaybackPaused");
+            lblRtspStatus.Text = Localization.T("Status.File", Path.GetFileName(_playbackPath));
+            lblLastFrame.Text = Localization.T("Status.Frame", _playbackFrameCount > 0 ? $"{_playbackFrameIndex + 1}/{_playbackFrameCount}" : $"{_playbackFrameIndex + 1}");
         }
         else
         {
             lblCameraStatus.Text = GetCameraStatusText();
-            lblRtspStatus.Text = _settings.Camera.IsIpCamera ? $"RTSP: {_cameraService.ConnectionState}" : "RTSP: 해당 없음";
-            lblLastFrame.Text = _lastFrameAt == DateTime.MinValue ? "마지막 프레임: 없음" : $"마지막 프레임: {(DateTime.Now - _lastFrameAt).TotalSeconds:0.0}초 전";
+            lblRtspStatus.Text = _settings.Camera.IsIpCamera ? $"RTSP: {_cameraService.ConnectionState}" : Localization.T("Status.RtspNone");
+            lblLastFrame.Text = _lastFrameAt == DateTime.MinValue ? Localization.T("Status.LastFrameNone") : Localization.T("Status.LastFrameAgo", (DateTime.Now - _lastFrameAt).TotalSeconds);
         }
 
-        lblDetectionStatus.Text = $"감지: P={result.PersonDetected} I={result.RodMotionScore:0.000} H={result.HomeStable}";
-        lblAlgorithmStatus.Text = _lastAlgorithmEnabled ? $"알고리즘: {_lastAlgorithmMs:0.0}ms / {_algorithmFpsCounter.CurrentFps:0.0}fps" : "알고리즘: 꺼짐";
-        lblRecordingStatus.Text = _isPlaybackMode ? "녹화: 재생 모드" : _recordingService.IsRecording ? "녹화: 켜짐" : $"녹화: {FormatState(_stateMachine.CurrentState)}";
+        lblDetectionStatus.Text = Localization.T("Status.DetectionMetrics", result.PersonDetected, result.RodMotionScore, result.HomeStable);
+        lblAlgorithmStatus.Text = _lastAlgorithmEnabled ? Localization.T("Status.AlgorithmMetrics", _lastAlgorithmMs, _algorithmFpsCounter.CurrentFps) : Localization.T("Status.AlgorithmOff");
+        lblRecordingStatus.Text = _isPlaybackMode ? Localization.T("Status.RecordingPlayback") : _recordingService.IsRecording ? Localization.T("Status.RecordingOn") : Localization.T("Status.RecordingState", FormatState(_stateMachine.CurrentState));
         UpdateControlStates();
         if (DateTime.Now - _lastDiskStatusAt > TimeSpan.FromSeconds(5))
         {
-            _cachedDiskStatus = $"디스크: {DiskUtils.GetUsedPercent(_paths.RecVideos):0.0}% 사용 / 여유: {DiskUtils.FormatBytes(DiskUtils.GetFreeDiskBytes(_paths.RecVideos))}";
+            _cachedDiskStatus = Localization.T("Status.DiskUsage", DiskUtils.GetUsedPercent(_paths.RecVideos), DiskUtils.FormatBytes(DiskUtils.GetFreeDiskBytes(_paths.RecVideos)));
             _lastDiskStatusAt = DateTime.Now;
         }
 
         lblDiskStatus.Text = _cachedDiskStatus;
-        lblErrorStatus.Text = "오류: 없음";
+        lblErrorStatus.Text = Localization.T("Status.ErrorNone");
     }
 
     private void SaveEventLog(string filePath, DateTime endTime)
@@ -1504,8 +2039,8 @@ public sealed partial class MainForm : Form
 
     private bool BlockRecordingForDisk(DateTime now, string triggerReason, double usedPercent, int stopThreshold, int resumeThreshold)
     {
-        lblRecordingStatus.Text = $"녹화: 디스크 {usedPercent:0.0}% 사용";
-        ShowRecordingStamp("Disk full", Color.FromArgb(178, 34, 34));
+        lblRecordingStatus.Text = Localization.T("Status.RecordingDisk", usedPercent);
+        ShowRecordingStamp(Localization.T("Stamp.DiskFull"), Color.FromArgb(178, 34, 34));
         if (now - _lastDiskFullLogAt > TimeSpan.FromMinutes(1))
         {
             _logger.Info($"Recording blocked. Disk used {usedPercent:0.0}%, stop={stopThreshold}%, resume={resumeThreshold}% ({triggerReason}).");
@@ -1666,7 +2201,7 @@ public sealed partial class MainForm : Form
         ApplySettingsToUi();
         _settingsManager.Save(_settings);
         StartCleanupSchedule(runStartupCleanup: false);
-        lblCameraStatus.Text = "설정: 저장됨";
+        lblCameraStatus.Text = Localization.T("Status.SettingsSaved");
         RedrawPlaybackFrameIfActive();
     }
 
@@ -1710,13 +2245,13 @@ public sealed partial class MainForm : Form
         try
         {
             _logger.Info("Full auto start running.");
-            lblRecordingStatus.Text = "녹화: 자동 시작 대기";
+            lblRecordingStatus.Text = Localization.T("Status.RecordingAutoWait");
             rdoFullRecording.Checked = true;
             await Task.Delay(TimeSpan.FromSeconds(2));
             ReadCameraSettingsFromUi();
             if (!_settings.Camera.IsIpCamera && !await EnsureUsbCameraSelectedAsync())
             {
-                lblRecordingStatus.Text = "녹화: 자동 시작 실패, USB 카메라 없음";
+                lblRecordingStatus.Text = Localization.T("Status.RecordingAutoNoUsb");
                 _logger.Info("Full auto start skipped: no USB camera found.");
                 return;
             }
@@ -1724,7 +2259,7 @@ public sealed partial class MainForm : Form
             await OpenCameraPreviewAsync();
             if (!await WaitForFirstCameraFrameAsync(TimeSpan.FromSeconds(20)))
             {
-                lblRecordingStatus.Text = "녹화: 자동 시작 실패, 프레임 없음";
+                lblRecordingStatus.Text = Localization.T("Status.RecordingAutoNoFrame");
                 _logger.Info("Full auto start skipped: no frame received after camera open.");
                 return;
             }
@@ -1739,7 +2274,7 @@ public sealed partial class MainForm : Form
         catch (Exception ex)
         {
             _logger.Error(ex, "Full auto start failed");
-            lblRecordingStatus.Text = $"녹화: 자동 시작 실패 ({ex.Message})";
+            lblRecordingStatus.Text = Localization.T("Status.RecordingAutoFailed", ex.Message);
         }
         finally
         {
@@ -1817,28 +2352,28 @@ public sealed partial class MainForm : Form
     private string GetCameraStatusText()
     {
         return _settings.Camera.IsIpCamera
-            ? $"카메라: IP {_settings.Camera.IpCamera.IpAddress}"
-            : $"카메라: USB {_settings.Camera.UsbCamera.DeviceIndex}";
+            ? Localization.T("Status.CameraIp", _settings.Camera.IpCamera.IpAddress)
+            : Localization.T("Status.CameraUsb", _settings.Camera.UsbCamera.DeviceIndex);
     }
 
     private string GetCameraErrorText()
     {
         return _settings.Camera.IsIpCamera
-            ? "카메라 오류: IP 카메라 연결 실패"
-            : "카메라 오류: USB 카메라 연결 실패";
+            ? Localization.T("Status.CameraIpError")
+            : Localization.T("Status.CameraUsbError");
     }
 
     private static string FormatState(BlackboxState state)
     {
         return state switch
         {
-            BlackboxState.Idle => "대기",
-            BlackboxState.Watching => "감시 중",
-            BlackboxState.PreEvent => "사전 이벤트",
-            BlackboxState.Recording => "녹화 중",
-            BlackboxState.WaitForStableHome => "안정 대기",
-            BlackboxState.Cooldown => "쿨다운",
-            BlackboxState.Error => "오류",
+            BlackboxState.Idle => Localization.T("State.Idle"),
+            BlackboxState.Watching => Localization.T("State.Watching"),
+            BlackboxState.PreEvent => Localization.T("State.PreEvent"),
+            BlackboxState.Recording => Localization.T("State.Recording"),
+            BlackboxState.WaitForStableHome => Localization.T("State.WaitForStableHome"),
+            BlackboxState.Cooldown => Localization.T("State.Cooldown"),
+            BlackboxState.Error => Localization.T("State.Error"),
             _ => state.ToString()
         };
     }
@@ -1847,7 +2382,7 @@ public sealed partial class MainForm : Form
     {
         _fullScreenHint = new FullScreenHintControl
         {
-            Text = "전체 화면을 종료하려면 F11키를 누르세요",
+            Text = Localization.T("FullScreen.Hint"),
             Visible = false
         };
         picCameraPreview.Controls.Add(_fullScreenHint);
@@ -2132,7 +2667,7 @@ public sealed partial class MainForm : Form
     {
         if (!IsCameraPreviewOpen())
         {
-            lblRecordingStatus.Text = "녹화: 먼저 카메라를 여세요";
+            lblRecordingStatus.Text = Localization.T("Status.RecordingOpenCameraFirst");
             UpdateControlStates();
             return;
         }
@@ -2163,7 +2698,7 @@ public sealed partial class MainForm : Form
             RotateFullRecordingIfDue(DateTime.Now, latestFrame);
         }
 
-        lblRecordingStatus.Text = $"녹화: {GetFullInterval().TotalMinutes:0}분마다 전체 녹화";
+        lblRecordingStatus.Text = Localization.T("Status.RecordingFullInterval", GetFullInterval().TotalMinutes);
         UpdateControlStates();
         return Task.CompletedTask;
     }
@@ -2175,7 +2710,7 @@ public sealed partial class MainForm : Form
         _fullRecordingRequested = false;
         _nextFullRecordingRotationAt = DateTime.MinValue;
         StopRecordingIfActive(DateTime.Now);
-        lblRecordingStatus.Text = "녹화: 정지됨";
+        lblRecordingStatus.Text = Localization.T("Status.RecordingStopped");
         UpdateControlStates();
     }
 
@@ -2189,7 +2724,7 @@ public sealed partial class MainForm : Form
         if (_recordingService.IsRecording)
         {
             string filePath = _recordingService.StopRecording(now);
-            ShowRecordingStamp("녹화 정지", Color.FromArgb(192, 92, 24));
+            ShowRecordingStamp(Localization.T("Stamp.RecordingStopped"), Color.FromArgb(192, 92, 24));
             SaveEventLog(filePath, now);
         }
 
@@ -2202,7 +2737,7 @@ public sealed partial class MainForm : Form
         }
 
         _recordingService.StartRecording(now, "Full", frame);
-        ShowRecordingStamp("녹화 시작", Color.FromArgb(24, 132, 74));
+        ShowRecordingStamp(Localization.T("Stamp.RecordingStarted"), Color.FromArgb(24, 132, 74));
         _currentRecordingStartedAt = now;
         _currentTriggerReason = "Full";
         _maxMotionScore = 0;
@@ -2242,7 +2777,7 @@ public sealed partial class MainForm : Form
 
             using var latestFrame = TryCloneLatestFrame();
             _recordingService.StartRecording(now, "Manual", latestFrame);
-            ShowRecordingStamp("녹화 시작", Color.FromArgb(24, 132, 74));
+            ShowRecordingStamp(Localization.T("Stamp.RecordingStarted"), Color.FromArgb(24, 132, 74));
             _currentRecordingStartedAt = now;
             _currentTriggerReason = "Manual";
             _maxMotionScore = 0;
@@ -2250,7 +2785,7 @@ public sealed partial class MainForm : Form
             _minHomeDiffScore = double.MaxValue;
         }
 
-        lblRecordingStatus.Text = "녹화: 수동 요청됨";
+        lblRecordingStatus.Text = Localization.T("Status.RecordingManualRequested");
         UpdateControlStates();
         return Task.CompletedTask;
     }
@@ -2260,7 +2795,7 @@ public sealed partial class MainForm : Form
         _stateMachine.RequestManualRecordingStop();
         _manualRecordingRequested = false;
         StopRecordingIfActive(DateTime.Now);
-        lblRecordingStatus.Text = "녹화: 정지됨";
+        lblRecordingStatus.Text = Localization.T("Status.RecordingStopped");
         UpdateControlStates();
     }
 
@@ -2276,7 +2811,7 @@ public sealed partial class MainForm : Form
         }
 
         string? filePath = _recordingService.StopRecording(endTime);
-        ShowRecordingStamp("녹화 정지", Color.FromArgb(192, 92, 24));
+        ShowRecordingStamp(Localization.T("Stamp.RecordingStopped"), Color.FromArgb(192, 92, 24));
         SaveEventLog(filePath, endTime);
         _stateMachine.CompleteRecording(endTime);
         UpdateControlStates();
@@ -2459,7 +2994,7 @@ public sealed partial class MainForm : Form
         catch (Exception ex)
         {
             _logger.Error(ex, "Saving home reference failed");
-            lblErrorStatus.Text = $"오류: {ex.Message}";
+            lblErrorStatus.Text = Localization.T("Status.Error", ex.Message);
         }
     }
 
@@ -2468,7 +3003,7 @@ public sealed partial class MainForm : Form
         using var frame = TryCloneLatestFrame();
         if (frame is null)
         {
-            lblDetectionStatus.Text = "감지: 저장할 프레임 없음";
+            lblDetectionStatus.Text = Localization.T("Status.DetectionNoFrame");
             return;
         }
 
@@ -2476,12 +3011,12 @@ public sealed partial class MainForm : Form
         {
             _detectionService.SaveBaselineReference(frame, _paths.BaselineReferencePath);
             _logger.Info($"Detection baseline reference saved: {_paths.BaselineReferencePath}");
-            lblDetectionStatus.Text = "감지: 기준 저장됨";
+            lblDetectionStatus.Text = Localization.T("Status.DetectionBaselineSaved");
         }
         catch (Exception ex)
         {
             _logger.Error(ex, "Saving detection baseline failed");
-            lblErrorStatus.Text = $"오류: {ex.Message}";
+            lblErrorStatus.Text = Localization.T("Status.Error", ex.Message);
         }
     }
 
@@ -2489,7 +3024,7 @@ public sealed partial class MainForm : Form
     {
         if (_settings.Camera.IsIpCamera)
         {
-            MessageBox.Show(this, "카메라 속성 조정은 USB 카메라에서 사용할 수 있습니다. IP 카메라 설정은 카메라 웹 페이지를 사용하세요.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, Localization.T("Msg.UsbPropertyOnly"), "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -2955,4 +3490,5 @@ public sealed partial class MainForm : Form
             e.Graphics.DrawString(Text, Font, foreground, x, y);
         }
     }
+
 }

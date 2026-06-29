@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DFBlackbox.Utils;
 
 namespace DFBlackbox;
 
@@ -10,7 +11,8 @@ static class Program
         using var mutex = new Mutex(true, "DFBlackbox.SingleInstance", out var createdNew);
         if (!createdNew)
         {
-            MessageBox.Show("DFBlackbox is already running.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Localization.SetLanguage(ReadLanguageSetting());
+            MessageBox.Show(Localization.IsEnglish ? "DFBlackbox is already running." : "DFBlackbox가 이미 실행 중입니다.", "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -54,5 +56,26 @@ static class Program
         }
 
         return false;
+    }
+
+    private static string ReadLanguageSetting()
+    {
+        try
+        {
+            string path = Path.Combine(AppContext.BaseDirectory, "settings.json");
+            if (!File.Exists(path))
+            {
+                return Localization.Korean;
+            }
+
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            return document.RootElement.TryGetProperty("Language", out var language)
+                ? Localization.NormalizeLanguage(language.GetString())
+                : Localization.Korean;
+        }
+        catch
+        {
+            return Localization.Korean;
+        }
     }
 }

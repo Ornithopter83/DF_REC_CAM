@@ -1,192 +1,105 @@
-# DFBlackbox Current Work
+# DFBlackbox 현재 작업 상태
 
-Updated: 2026-06-24
+업데이트: 2026-06-29
 
-## Current State
+## 프로젝트 개요
 
-- Project: `C:\Projects\VS\DFBlackbox`
-- App: .NET 8 WinForms, OpenCvSharp based blackbox recorder and playback analyzer.
-- Settings/log/recording root is the executable folder.
-  - Settings: `settings.json`
-  - Baseline diff image: `baseline_reference.png`
-  - Recordings: `REC`
-  - Logs: `Logs`
+- 저장소: `C:\Projects\VS\DFBlackbox`
+- 애플리케이션: .NET 8 Windows Forms 기반 블랙박스/감시 녹화 및 재생 도구
+- 주요 기술:
+  - WinForms
+  - OpenCvSharp
+  - FFmpeg 우선 녹화 저장, OpenCV 녹화 fallback
+- 주요 설정/런타임 파일:
+  - 설정: `settings.json`
+  - 기준 이미지: `baseline_reference.png`
+  - 녹화 폴더: `REC`
+  - 로그 폴더: `Logs`
 
-## Recent Changes
+## 최근 주요 변경
 
-- Git repository was initialized locally and connected to GitHub remote:
-  - `origin` -> `https://github.com/Ornithopter83/DF_REC_CAM.git`
-- Added `.gitignore` for Visual Studio/.NET build outputs, local IDE state, publish artifacts, runtime settings/logs/recordings, and temporary files.
-- Fixed startup/tray behavior so a hidden startup path still shows the tray icon.
-- Camera discovery behavior was refined:
-  - Full mode auto-start can search/connect/start recording automatically.
-  - Manual and Auto modes do not scan cameras on startup.
-  - Manual and Auto only start camera discovery after `Connect` or `Open Camera`.
-- Fixed playback mode exit so `Connect` and `Open Camera` become available again after loading a video.
-- Fixed ROI/debug overlay application so `ROI / Ignore ROI` and `Debug Text` apply immediately with one Apply click.
-- Playback overlays now respect the main ROI/debug settings and refresh the current playback frame after overlay changes.
-- Fixed broken UI/message text by replacing affected labels/message boxes/tray menu items with ASCII strings.
-- Fixed the hidden button to the right of `SAVE` by resizing the bottom `SAVE` / `Defaults` row buttons.
-- Recordings are now saved under daily folders:
-  - `REC\YYYY\MM\DD\yyyyMMdd_HHmmss.mp4`
-  - Active files use the same folder with `.recording.mp4` until finalized.
-- Recording writes frames by timestamp at the configured FPS.
-  - Excess camera frames are dropped instead of being written into a low-FPS video.
-  - This keeps video duration aligned with real elapsed time and reduces file size for long/full-day recording.
-- Playback overlays are now controlled from Settings > Overlay:
-  - Playback ROI outlines
-  - Playback diff message
-  - Playback tracking candidate
-- Added a `Full` recording mode next to `Manual` and `Auto`.
-  - Start Rec with `Full` selected starts continuous recording.
-  - Full mode closes the current MP4 and immediately starts a new MP4 every configured interval.
-  - The interval is saved in Settings > Recording > Full Interval Minutes.
-- When `Full` is selected, the watch button is disabled and watching is forced off.
-- `Start Rec` is disabled until `Open Camera` has opened the live preview; recording start handlers also refuse to start without an open preview.
-- Settings > Recording now has `Start Full recording on app startup`.
-  - The checkbox is enabled only when the main window is currently in `Full` mode.
-  - On startup, the app selects Full mode, opens the camera preview, waits up to 20 seconds for a fresh frame, waits 1 more second, then starts Full recording.
-  - If tray startup is enabled too, the form stays visible until camera open and Full recording startup have completed, then it hides to tray.
-  - Tray startup also schedules this from visible-form paths, `OnHandleCreated`, and a one-shot UI timer fallback.
-  - Logs include `Full auto start scheduled.` and `Full auto start running.` for startup diagnosis.
-- Watch/playback/default button captions were changed to ASCII text to avoid broken labels in the current build.
-- Added `RecordingSettings.FullIntervalMinutes` to settings with a default of 5 minutes.
+### 현지화
 
-## Important Behavior
+- 앱 언어 설정 `Language`를 `settings.json`에 저장한다.
+- 기본 언어는 `KOR`이며, 기존 설정 파일에 언어 값이 없어도 정상 동작한다.
+- 메인 메뉴에 한국어/영어 선택 메뉴를 추가했다.
+- 메인 화면, 설정창, 최근 이벤트창, 카메라 속성창의 주요 문구를 KOR/ENG로 표시한다.
+- 상태바, 메시지박스, 트레이 메뉴, 파일 열기 대화상자의 주요 문구도 현지화했다.
+- 공용 현지화 유틸은 `DFBlackbox/Utils/Localization.cs`에 있다.
 
-- Manual recording still starts/stops as before.
-- Auto recording remains event/detection driven.
-- Full recording is independent from the auto-detection state machine and logs each segment as trigger `Full`.
-- Crash recovery searches nested recording folders for leftover `.recording.mp4` files.
-- Recording output remains clean source frames without overlay graphics burned into MP4 files.
-- Playback ROI/boxes are scaled to the MP4 frame ratio.
+### 동영상 파일 드래그드롭 재생
 
-## Verification
+- 영상 표시 영역에 동영상 파일을 드래그하면 지원 여부를 시각적으로 표시한다.
+- 지원 확장자:
+  - `.mp4`
+  - `.avi`
+  - `.mov`
+  - `.mkv`
+  - `.wmv`
+- 지원 파일 드롭 시 기존 재생 모드로 진입하고 자동 재생한다.
+- 미지원 파일 또는 복수 파일 드롭은 재생하지 않고 거부 상태만 표시한다.
+- 드롭 안내 문구가 재생 화면에 남지 않도록 `PictureBox` 직접 그리기 방식으로 보정했다.
 
-```text
-dotnet build DFBlackbox\DFBlackbox.csproj -o .buildcheck -v:q -nologo -clp:ErrorsOnly
-Result: success
-Warnings: 0
-Errors: 0
-```
+### 재생 최적화
 
-## Next Work
+- 1920x1080, 54~60fps 고비트레이트 영상 재생 성능 개선을 진행했다.
+- 재생 중 강제 repaint 호출을 제거했다.
+- 오버레이가 꺼진 일반 재생에서는 표시용 canvas clone을 생략하고 직접 Bitmap으로 변환한다.
+- 오버레이가 꺼진 재생 경로에 10프레임 버퍼를 추가했다.
+- 백그라운드에서 프레임을 읽고 Bitmap으로 준비한 뒤, UI 스레드는 준비된 이미지를 표시한다.
+- OpenCV 백엔드가 지원하는 경우 하드웨어 가속 디코딩 속성을 시도한다.
+- 하드웨어 가속 속성 적용 실패 또는 미지원 환경에서는 기존 소프트웨어 디코딩으로 동작한다.
+- 설정창에 재생 최적화 모드를 추가했다.
+  - `균형`: 오버레이가 꺼진 일반 재생에서 버퍼 경로 사용
+  - `재생 우선`: 재생 속도를 우선하여 재생 오버레이를 생략하고 버퍼 경로 사용
+  - `추적 우선`: 기존 분석/오버레이 의미를 우선하여 기존 재생 경로 사용
 
-1. Smoke test Full mode with a small interval, confirming sequential MP4 files and event log entries are created.
+### 녹화/재생 전용 모드
 
-## 2026-06-23 Update: Persist Manual / Auto / Full Mode
+- 실행 인수 `--reconly`, `/reconly`, `-reconly`로 녹화/재생 전용 모드를 켠다.
+- 녹화/재생 전용 모드에서는 감지/오버레이 관련 일부 UI를 숨긴다.
+- 저장된 녹화 모드가 `Auto`여도 녹화/재생 전용 모드에서는 `Manual` 또는 `Full` 중심으로 보정한다.
 
-- Added `RecordingSettings.Mode`.
-  - Values: `Manual`, `Auto`, `Full`
-  - Default: `Manual`
-- The main `Manual / Auto / Full` radio selection is now saved when `SAVE` is pressed.
-- On the next launch, the saved recording mode is restored into the radio buttons.
-- Full auto-start is now gated by both settings:
-  - `AutoStartFullRecording == true`
-  - `RecordingSettings.Mode == "Full"`
-- This prevents an old Full auto-start setting from opening the camera or starting Full recording when the user saved `Manual` or `Auto`.
+## 현재 작업 문서
 
-Verification:
+- 작업 문서는 `tasks/*.md`에 번호형 파일명으로 정리한다.
+- 현재 주요 task 문서:
+  - `00_TEMPLATE.md`
+  - `01_녹화재생전용.md`
+  - `02_리팩토링_변수정책.md`
+  - `03_현지화.md`
+  - `04_동영상파일드래그드롭.md`
+  - `05_재생최적화.md`
+- 작업 완료 후 각 task 문서의 `결과` 섹션을 갱신한다.
+
+## 주요 동작 기준
+
+- 수동 녹화는 기존처럼 사용자가 시작/정지한다.
+- 자동 녹화는 감지 상태 머신 기반으로 동작한다.
+- 전체 녹화는 감지 상태와 독립적으로 연속 녹화하며, 설정된 간격마다 MP4 파일을 분리한다.
+- 재생 오버레이 설정은 설정창의 Overlay 섹션에서 제어한다.
+- 파일 선택 재생과 드래그드롭 재생은 같은 재생 흐름을 사용한다.
+- 재생 최적화 모드는 기존 오버레이 의미를 유지하면서 성능 우선 경로를 선택할 수 있게 한다.
+
+## 검증 상태
+
+최근 확인한 빌드 명령:
 
 ```text
 dotnet build DFBlackbox\DFBlackbox.csproj -o .buildcheck
-Result: success
-Warnings: 0
-Errors: 0
 ```
 
-## 2026-06-24 Update: GitHub / Ignore Rules / Startup Camera Flow
-
-- Initialized the local Git repository because the existing `.git` directory had no Git metadata.
-- Connected GitHub remote:
-  - `origin`: `https://github.com/Ornithopter83/DF_REC_CAM.git`
-- Added `.gitignore` to keep generated files out of source control:
-  - `.vs/`, `.buildcheck/`, `bin/`, `obj/`, `publish/`
-  - runtime `settings.json`, baseline images, `REC/`, `Logs/`, `*.recording.mp4`
-  - local user files and temporary/log files
-- Updated camera startup rules:
-  - Full mode may auto-discover and auto-connect the camera before starting recording.
-  - Manual/Auto do not discover cameras until the user clicks `Connect` or `Open Camera`.
-- Fixed overlay Apply behavior:
-  - `ROI / Ignore ROI` and `Debug Text` now apply in one click.
-  - Playback redraws the current frame after overlay setting changes.
-
-Verification:
+결과:
 
 ```text
-dotnet build DFBlackbox\DFBlackbox.csproj -o .buildcheck
-Result: success
 Warnings: 0
 Errors: 0
 ```
 
-## 2026-06-24 Update: Simplify IP Camera Utility Buttons
+## 다음 확인 권장 사항
 
-- Removed `Test`, `Web`, and `Copy` buttons from the main operation panel.
-- Removed the unused `Test` and `Copy` button functions from `MainForm`.
-- Moved camera web-page access into `SettingsForm` as a `Website` button.
-  - Location: right side of `Use manual RTSP URL`.
-  - Opens `http://{IP address}:{HTTP port}` for the current IP camera settings.
-  - Enabled only when IP Camera mode is selected.
-
-Verification:
-
-```text
-dotnet build DFBlackbox\DFBlackbox.csproj -o .buildcheck
-Result: success
-Warnings: 0
-Errors: 0
-```
-
-## 2026-06-24 Update: Playback Control Redesign
-
-- Replaced the default WinForms playback `TrackBar` and small playback buttons with a custom painted `PlaybackControl`.
-- New playback UI includes:
-  - Rounded progress bar with click/drag seeking.
-  - Current and total time labels.
-  - Circular previous, play/pause, and next buttons.
-  - Keyboard hint labels: `(-)`, `(/)`, `(+)`.
-- Existing playback behavior is preserved:
-  - Previous/next still step frames.
-  - Play/pause still uses the playback timer.
-  - Seeking still jumps to the requested frame.
-- Playback button shortcut hints now render inside the circular buttons as `[ - ]`, `[ / ]`, and `[ + ]`.
-- Playback FPS detection now estimates FPS from video duration metadata when OpenCV's FPS value is missing or differs significantly, so 60 FPS files can play closer to their original speed.
-- FPS detection was further hardened by reading MP4 `mvhd` duration directly from the container and calculating average FPS as `frame count / duration seconds`.
-  - OpenCV timestamp estimation remains a fallback.
-  - OpenCV metadata FPS remains the final fallback.
-- Playback speed handling was corrected to avoid random seeking on every timer tick.
-  - Normal playback now reads frames sequentially with `Read()`.
-  - Random seek is used only for user seek/step/redraw operations.
-  - Playback analysis is skipped when playback overlays are disabled, reducing per-frame work without dropping frames.
-- Playback no longer uses WinForms `Timer` for frame stepping.
-  - Playback now uses a `Stopwatch`-scheduled async loop based on the calculated frame interval.
-  - Playback preview images are applied immediately on the UI thread instead of being queued through `BeginInvoke`, preventing pending-preview throttling from lowering visible FPS.
-
-Verification:
-
-```text
-dotnet build DFBlackbox\DFBlackbox.csproj -o .buildcheck
-Result: success
-Warnings: 0
-Errors: 0
-```
-
-## 2026-06-24 Update: IP Camera Authentication
-
-- Added IP camera `User` and `Password` fields to `SettingsForm`.
-- Fixed a bug where `MainForm` and `SettingsForm` overwrote RTSP username/password with empty strings.
-- Generated RTSP URLs now include credentials when a username is configured.
-- This is required for cameras that report access-control/authentication errors on RTSP connection.
-- Reverted the authentication UI after camera access control was disabled.
-  - RTSP URLs are generated without username/password.
-  - Any old username/password values are cleared when camera settings are saved from the app.
-
-Verification:
-
-```text
-dotnet build DFBlackbox\DFBlackbox.csproj -o .buildcheck
-Result: success
-Warnings: 0
-Errors: 0
-```
+1. 1920x1080, 54~60fps 고비트레이트 동영상으로 파일 선택 재생을 확인한다.
+2. 같은 동영상으로 드래그드롭 재생을 확인한다.
+3. 재생 최적화 모드 `균형 / 재생 우선 / 추적 우선`을 각각 비교한다.
+4. 재생 중 일시정지, 재개, 이전/다음 프레임, 타임라인 탐색을 확인한다.
+5. 장시간 재생 후 메모리 사용량이 계속 증가하지 않는지 확인한다.

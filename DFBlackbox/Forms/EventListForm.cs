@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using DFBlackbox.Core;
+using DFBlackbox.Utils;
 
 namespace DFBlackbox.Forms;
 
@@ -11,15 +12,15 @@ public sealed class EventListForm : Form
     public EventListForm(EventLogService eventLogService)
     {
         _eventLogService = eventLogService;
-        Text = "최근 이벤트";
+        Text = Localization.T("Event.Title");
         Width = 980;
         Height = 520;
 
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 42 };
-        var refresh = new Button { Text = "새로고침", Width = 90 };
-        var openFile = new Button { Text = "열기", Width = 90 };
-        var openFolder = new Button { Text = "폴더", Width = 90 };
-        var clear = new Button { Text = "지우기", Width = 90 };
+        var refresh = new Button { Text = Localization.T("Event.Refresh"), Width = 90 };
+        var openFile = new Button { Text = Localization.T("Event.Open"), Width = 90 };
+        var openFolder = new Button { Text = Localization.T("Event.Folder"), Width = 90 };
+        var clear = new Button { Text = Localization.T("Event.Clear"), Width = 90 };
         refresh.Click += (_, _) => LoadEvents();
         openFile.Click += (_, _) => OpenSelectedFile(false);
         openFolder.Click += (_, _) => OpenSelectedFile(true);
@@ -34,9 +35,9 @@ public sealed class EventListForm : Form
     private void ConfigureGrid()
     {
         _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(Models.EventLog.Id), HeaderText = "ID", Width = 120 });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(Models.EventLog.StartTime), HeaderText = "시작", Width = 160 });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(Models.EventLog.EndTime), HeaderText = "종료", Width = 160 });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(Models.EventLog.TriggerReason), HeaderText = "트리거", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(Models.EventLog.StartTime), HeaderText = Localization.T("Event.Start"), Width = 160 });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(Models.EventLog.EndTime), HeaderText = Localization.T("Event.End"), Width = 160 });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(Models.EventLog.TriggerReason), HeaderText = Localization.T("Event.Trigger"), AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
     }
 
     private void LoadEvents()
@@ -46,7 +47,7 @@ public sealed class EventListForm : Form
 
     private void ClearEvents()
     {
-        if (MessageBox.Show(this, "최근 이벤트 기록을 모두 지울까요?", "최근 이벤트", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+        if (MessageBox.Show(this, Localization.T("Event.ClearConfirm"), Localization.T("Event.Title"), MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
         {
             return;
         }

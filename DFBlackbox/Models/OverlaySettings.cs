@@ -12,4 +12,5 @@ public sealed class OverlaySettings
     public bool ShowPlaybackRoiOutlines { get; set; } = true;
     public bool ShowPlaybackDiffMessage { get; set; } = true;
     public bool ShowPlaybackTrackingCandidate { get; set; } = true;
+    public string PlaybackOptimizationMode { get; set; } = "Balanced";
 }

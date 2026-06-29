@@ -2,6 +2,7 @@ namespace DFBlackbox.Models;
 
 public sealed class AppSettings
 {
+    public string Language { get; set; } = "KOR";
     public CameraSettings Camera { get; set; } = new();
     public DetectionSettings Detection { get; set; } = new();
     public RoiSettings Rois { get; set; } = new();
