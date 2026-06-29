@@ -733,7 +733,7 @@ public sealed partial class MainForm : Form
             return;
         }
 
-        await EnterPlaybackModeAsync(dialog.FileName);
+        await OpenPlaybackFileAsync(dialog.FileName);
     }
 
     private void PreviewVideo_DragEnter(object? sender, DragEventArgs e)
@@ -766,11 +766,7 @@ public sealed partial class MainForm : Form
                 return;
             }
 
-            await EnterPlaybackModeAsync(filePath);
-            if (_isPlaybackMode && !_playbackPlaying)
-            {
-                TogglePlayback();
-            }
+            await OpenPlaybackFileAsync(filePath);
         }
         catch (Exception ex)
         {
@@ -863,6 +859,11 @@ public sealed partial class MainForm : Form
         e.Graphics.DrawString(text, font, foreground, x, y);
     }
 
+    private async Task OpenPlaybackFileAsync(string filePath)
+    {
+        await EnterPlaybackModeAsync(filePath);
+    }
+
     private async Task EnterPlaybackModeAsync(string filePath)
     {
         await DisconnectCameraAsync();
@@ -902,8 +903,8 @@ public sealed partial class MainForm : Form
         var capture = new VideoCapture();
         try
         {
-            // OpenCV CAP_PROP_HW_ACCELERATION / CAP_PROP_HW_ACCELERATION_USE_OPENCL.
-            // Backend support varies; failures are ignored and software decode remains the fallback.
+            // OpenCV 하드웨어 가속 옵션을 우선 요청한다.
+            // 백엔드별 지원 여부가 달라 실패해도 무시하고 소프트웨어 디코딩으로 이어간다.
             capture.Set((VideoCaptureProperties)50, 1);
             capture.Set((VideoCaptureProperties)52, 1);
         }

@@ -89,7 +89,7 @@ public sealed class OnvifDiscoveryService
             }
             catch
             {
-                // Some adapters reject multicast binding; other active adapters can still answer.
+                // 일부 어댑터는 멀티캐스트 바인딩을 거부하지만, 다른 활성 어댑터가 응답할 수 있다.
             }
         }
 
@@ -129,7 +129,7 @@ public sealed class OnvifDiscoveryService
             }
             catch
             {
-                // Ignore malformed UDP responses and keep listening until the short deadline.
+                // 잘못된 UDP 응답은 무시하고 짧은 제한 시간까지 계속 수신한다.
             }
         }
 
