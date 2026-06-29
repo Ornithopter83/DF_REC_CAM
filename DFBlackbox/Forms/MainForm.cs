@@ -69,6 +69,7 @@ public sealed partial class MainForm : Form
     private readonly Queue<PlaybackFrame> _playbackBuffer = new();
     private CancellationTokenSource? _playbackPlayCts;
     private CancellationTokenSource? _playbackDecodeCts;
+    private Task? _playbackPlayTask;
     private Task? _playbackDecodeTask;
     private int _playbackFrameIndex;
     private int _playbackFrameCount;
@@ -919,6 +920,17 @@ public sealed partial class MainForm : Form
     private void ExitPlaybackMode(bool clearPreview)
     {
         StopPlaybackLoop();
+        ReleasePlaybackModeResources(clearPreview);
+    }
+
+    private async Task ExitPlaybackModeAsync(bool clearPreview)
+    {
+        await StopPlaybackLoopAsync();
+        ReleasePlaybackModeResources(clearPreview);
+    }
+
+    private void ReleasePlaybackModeResources(bool clearPreview)
+    {
         lock (_playbackCaptureSync)
         {
             _playbackCapture?.Dispose();
@@ -1185,18 +1197,77 @@ public sealed partial class MainForm : Form
     {
         StopPlaybackLoop();
         _playbackPlayCts = new CancellationTokenSource();
-        _ = RunPlaybackLoopAsync(_playbackPlayCts.Token);
+        _playbackPlayTask = RunPlaybackLoopAsync(_playbackPlayCts.Token);
     }
 
     private void StopPlaybackLoop()
     {
-        _playbackPlayCts?.Cancel();
-        _playbackPlayCts?.Dispose();
+        CancellationTokenSource? playCts = _playbackPlayCts;
+        CancellationTokenSource? decodeCts = _playbackDecodeCts;
+        Task? playTask = _playbackPlayTask;
+        Task? decodeTask = _playbackDecodeTask;
+
+        playCts?.Cancel();
+        decodeCts?.Cancel();
         _playbackPlayCts = null;
-        _playbackDecodeCts?.Cancel();
-        _playbackDecodeCts?.Dispose();
         _playbackDecodeCts = null;
+        _playbackPlayTask = null;
+        _playbackDecodeTask = null;
+        _ = ObserveStoppedPlaybackLoopAsync(playTask, decodeTask, playCts, decodeCts);
         ClearPlaybackBuffer();
+    }
+
+    private async Task StopPlaybackLoopAsync()
+    {
+        CancellationTokenSource? playCts = _playbackPlayCts;
+        CancellationTokenSource? decodeCts = _playbackDecodeCts;
+        Task? playTask = _playbackPlayTask;
+        Task? decodeTask = _playbackDecodeTask;
+
+        playCts?.Cancel();
+        decodeCts?.Cancel();
+        _playbackPlayCts = null;
+        _playbackDecodeCts = null;
+        _playbackPlayTask = null;
+        _playbackDecodeTask = null;
+
+        await AwaitPlaybackTaskCompletionAsync(decodeTask);
+        await AwaitPlaybackTaskCompletionAsync(playTask);
+        decodeCts?.Dispose();
+        playCts?.Dispose();
+        ClearPlaybackBuffer();
+    }
+
+    private async Task ObserveStoppedPlaybackLoopAsync(
+        Task? playTask,
+        Task? decodeTask,
+        CancellationTokenSource? playCts,
+        CancellationTokenSource? decodeCts)
+    {
+        await AwaitPlaybackTaskCompletionAsync(decodeTask);
+        await AwaitPlaybackTaskCompletionAsync(playTask);
+        decodeCts?.Dispose();
+        playCts?.Dispose();
+    }
+
+    private async Task AwaitPlaybackTaskCompletionAsync(Task? task)
+    {
+        if (task is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await task;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(ex, "Playback loop stopped with error");
+        }
     }
 
     private async Task RunPlaybackLoopAsync(CancellationToken token)
@@ -3217,7 +3288,7 @@ public sealed partial class MainForm : Form
         await StopCaptureLoopAsync();
         StopRecordingIfActive(DateTime.Now);
         _settingsManager?.Save(_settings);
-        ExitPlaybackMode(clearPreview: false);
+        await ExitPlaybackModeAsync(clearPreview: false);
         _cleanupTimer?.Dispose();
         _autoStartFullRecordingTimer?.Dispose();
         _fullScreenHintTimer?.Dispose();
