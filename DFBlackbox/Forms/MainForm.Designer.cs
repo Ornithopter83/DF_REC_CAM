@@ -10,54 +10,54 @@ partial class MainForm
     private PictureBox picCameraPreview;
     private FlowLayoutPanel playbackPanel;
     private PlaybackControl playbackControl;
-    private Panel sidePanel;
+    private Krypton.Toolkit.KryptonPanel sidePanel;
     private FlowLayoutPanel sideContentPanel;
     private StatusStrip statusStrip;
-    private RadioButton rdoUsbCamera;
-    private RadioButton rdoIpCamera;
-    private ComboBox cmbCameraList;
-    private ComboBox cmbResolution;
-    private ComboBox cmbFps;
-    private TextBox txtIpAddress;
-    private NumericUpDown numRtspPort;
-    private NumericUpDown numHttpPort;
-    private ComboBox cmbStreamPath;
-    private CheckBox chkUseManualRtspUrl;
-    private TextBox txtManualRtspUrl;
-    private TextBox txtGeneratedRtspUrl;
-    private Button btnRefreshCamera;
-    private Button btnApplyCamera;
-    private Button btnWatchToggle;
-    private Button btnDefaultSettings;
-    private Button btnConnectCamera;
-    private Button btnDisconnectCamera;
-    private Button btnOpenCamera;
-    private Button btnCloseCamera;
-    private Button btnLoadVideoFile;
-    private Button btnCameraProperty;
-    private Button btnOpenStorageFolder;
-    private Button btnSettings;
-    private RadioButton rdoManualRecording;
-    private RadioButton rdoAutoRecording;
-    private RadioButton rdoFullRecording;
-    private Button btnStartRecording;
-    private Button btnStopRecording;
-    private Button btnSaveHomeReference;
-    private Button btnOpenEventList;
-    private CheckBox chkShowPersonBox;
-    private CheckBox chkShowMotionMask;
-    private CheckBox chkShowRodRoi;
-    private CheckBox chkShowHomeRoi;
-    private CheckBox chkShowDebugText;
-    private CheckBox chkShowRecordingStatus;
-    private CheckBox chkShowFrameTime;
-    private NumericUpDown numMotionThreshold;
-    private NumericUpDown numMinMotionArea;
-    private NumericUpDown numPersonThreshold;
-    private NumericUpDown numRodThreshold;
-    private NumericUpDown numStrongRodThreshold;
-    private NumericUpDown numHomeDiffThreshold;
-    private NumericUpDown numHomeMotionThreshold;
+    private Krypton.Toolkit.KryptonRadioButton rdoUsbCamera;
+    private Krypton.Toolkit.KryptonRadioButton rdoIpCamera;
+    private Krypton.Toolkit.KryptonComboBox cmbCameraList;
+    private Krypton.Toolkit.KryptonComboBox cmbResolution;
+    private Krypton.Toolkit.KryptonComboBox cmbFps;
+    private Krypton.Toolkit.KryptonTextBox txtIpAddress;
+    private Krypton.Toolkit.KryptonNumericUpDown numRtspPort;
+    private Krypton.Toolkit.KryptonNumericUpDown numHttpPort;
+    private Krypton.Toolkit.KryptonComboBox cmbStreamPath;
+    private Krypton.Toolkit.KryptonCheckBox chkUseManualRtspUrl;
+    private Krypton.Toolkit.KryptonTextBox txtManualRtspUrl;
+    private Krypton.Toolkit.KryptonTextBox txtGeneratedRtspUrl;
+    private Krypton.Toolkit.KryptonButton btnRefreshCamera;
+    private Krypton.Toolkit.KryptonButton btnApplyCamera;
+    private Krypton.Toolkit.KryptonButton btnWatchToggle;
+    private Krypton.Toolkit.KryptonButton btnDefaultSettings;
+    private Krypton.Toolkit.KryptonButton btnConnectCamera;
+    private Krypton.Toolkit.KryptonButton btnDisconnectCamera;
+    private Krypton.Toolkit.KryptonButton btnOpenCamera;
+    private Krypton.Toolkit.KryptonButton btnCloseCamera;
+    private Krypton.Toolkit.KryptonButton btnLoadVideoFile;
+    private Krypton.Toolkit.KryptonButton btnCameraProperty;
+    private Krypton.Toolkit.KryptonButton btnOpenStorageFolder;
+    private Krypton.Toolkit.KryptonButton btnSettings;
+    private Krypton.Toolkit.KryptonRadioButton rdoManualRecording;
+    private Krypton.Toolkit.KryptonRadioButton rdoAutoRecording;
+    private Krypton.Toolkit.KryptonRadioButton rdoFullRecording;
+    private Krypton.Toolkit.KryptonButton btnStartRecording;
+    private Krypton.Toolkit.KryptonButton btnStopRecording;
+    private Krypton.Toolkit.KryptonButton btnSaveHomeReference;
+    private Krypton.Toolkit.KryptonButton btnOpenEventList;
+    private Krypton.Toolkit.KryptonCheckBox chkShowPersonBox;
+    private Krypton.Toolkit.KryptonCheckBox chkShowMotionMask;
+    private Krypton.Toolkit.KryptonCheckBox chkShowRodRoi;
+    private Krypton.Toolkit.KryptonCheckBox chkShowHomeRoi;
+    private Krypton.Toolkit.KryptonCheckBox chkShowDebugText;
+    private Krypton.Toolkit.KryptonCheckBox chkShowRecordingStatus;
+    private Krypton.Toolkit.KryptonCheckBox chkShowFrameTime;
+    private Krypton.Toolkit.KryptonNumericUpDown numMotionThreshold;
+    private Krypton.Toolkit.KryptonNumericUpDown numMinMotionArea;
+    private Krypton.Toolkit.KryptonNumericUpDown numPersonThreshold;
+    private Krypton.Toolkit.KryptonNumericUpDown numRodThreshold;
+    private Krypton.Toolkit.KryptonNumericUpDown numStrongRodThreshold;
+    private Krypton.Toolkit.KryptonNumericUpDown numHomeDiffThreshold;
+    private Krypton.Toolkit.KryptonNumericUpDown numHomeMotionThreshold;
     private ToolStripStatusLabel lblCameraStatus;
     private ToolStripStatusLabel lblRtspStatus;
     private ToolStripStatusLabel lblLastFrame;
@@ -88,54 +88,54 @@ partial class MainForm
         picCameraPreview = new PictureBox();
         playbackPanel = new FlowLayoutPanel();
         playbackControl = new PlaybackControl();
-        sidePanel = new Panel();
+        sidePanel = new Krypton.Toolkit.KryptonPanel();
         sideContentPanel = new FlowLayoutPanel();
         statusStrip = new StatusStrip();
-        rdoUsbCamera = new RadioButton();
-        rdoIpCamera = new RadioButton();
-        cmbCameraList = new ComboBox();
-        cmbResolution = new ComboBox();
-        cmbFps = new ComboBox();
-        txtIpAddress = new TextBox();
-        numRtspPort = new NumericUpDown();
-        numHttpPort = new NumericUpDown();
-        cmbStreamPath = new ComboBox();
-        chkUseManualRtspUrl = new CheckBox();
-        txtManualRtspUrl = new TextBox();
-        txtGeneratedRtspUrl = new TextBox();
-        btnRefreshCamera = new Button();
-        btnApplyCamera = new Button();
-        btnWatchToggle = new Button();
-        btnDefaultSettings = new Button();
-        btnConnectCamera = new Button();
-        btnDisconnectCamera = new Button();
-        btnOpenCamera = new Button();
-        btnCloseCamera = new Button();
-        btnLoadVideoFile = new Button();
-        btnCameraProperty = new Button();
-        btnOpenStorageFolder = new Button();
-        btnSettings = new Button();
-        rdoManualRecording = new RadioButton();
-        rdoAutoRecording = new RadioButton();
-        rdoFullRecording = new RadioButton();
-        btnStartRecording = new Button();
-        btnStopRecording = new Button();
-        btnSaveHomeReference = new Button();
-        btnOpenEventList = new Button();
-        chkShowPersonBox = new CheckBox();
-        chkShowMotionMask = new CheckBox();
-        chkShowRodRoi = new CheckBox();
-        chkShowHomeRoi = new CheckBox();
-        chkShowDebugText = new CheckBox();
-        chkShowRecordingStatus = new CheckBox();
-        chkShowFrameTime = new CheckBox();
-        numMotionThreshold = new NumericUpDown();
-        numMinMotionArea = new NumericUpDown();
-        numPersonThreshold = new NumericUpDown();
-        numRodThreshold = new NumericUpDown();
-        numStrongRodThreshold = new NumericUpDown();
-        numHomeDiffThreshold = new NumericUpDown();
-        numHomeMotionThreshold = new NumericUpDown();
+        rdoUsbCamera = new Krypton.Toolkit.KryptonRadioButton();
+        rdoIpCamera = new Krypton.Toolkit.KryptonRadioButton();
+        cmbCameraList = new Krypton.Toolkit.KryptonComboBox();
+        cmbResolution = new Krypton.Toolkit.KryptonComboBox();
+        cmbFps = new Krypton.Toolkit.KryptonComboBox();
+        txtIpAddress = new Krypton.Toolkit.KryptonTextBox();
+        numRtspPort = new Krypton.Toolkit.KryptonNumericUpDown();
+        numHttpPort = new Krypton.Toolkit.KryptonNumericUpDown();
+        cmbStreamPath = new Krypton.Toolkit.KryptonComboBox();
+        chkUseManualRtspUrl = new Krypton.Toolkit.KryptonCheckBox();
+        txtManualRtspUrl = new Krypton.Toolkit.KryptonTextBox();
+        txtGeneratedRtspUrl = new Krypton.Toolkit.KryptonTextBox();
+        btnRefreshCamera = new Krypton.Toolkit.KryptonButton();
+        btnApplyCamera = new Krypton.Toolkit.KryptonButton();
+        btnWatchToggle = new Krypton.Toolkit.KryptonButton();
+        btnDefaultSettings = new Krypton.Toolkit.KryptonButton();
+        btnConnectCamera = new Krypton.Toolkit.KryptonButton();
+        btnDisconnectCamera = new Krypton.Toolkit.KryptonButton();
+        btnOpenCamera = new Krypton.Toolkit.KryptonButton();
+        btnCloseCamera = new Krypton.Toolkit.KryptonButton();
+        btnLoadVideoFile = new Krypton.Toolkit.KryptonButton();
+        btnCameraProperty = new Krypton.Toolkit.KryptonButton();
+        btnOpenStorageFolder = new Krypton.Toolkit.KryptonButton();
+        btnSettings = new Krypton.Toolkit.KryptonButton();
+        rdoManualRecording = new Krypton.Toolkit.KryptonRadioButton();
+        rdoAutoRecording = new Krypton.Toolkit.KryptonRadioButton();
+        rdoFullRecording = new Krypton.Toolkit.KryptonRadioButton();
+        btnStartRecording = new Krypton.Toolkit.KryptonButton();
+        btnStopRecording = new Krypton.Toolkit.KryptonButton();
+        btnSaveHomeReference = new Krypton.Toolkit.KryptonButton();
+        btnOpenEventList = new Krypton.Toolkit.KryptonButton();
+        chkShowPersonBox = new Krypton.Toolkit.KryptonCheckBox();
+        chkShowMotionMask = new Krypton.Toolkit.KryptonCheckBox();
+        chkShowRodRoi = new Krypton.Toolkit.KryptonCheckBox();
+        chkShowHomeRoi = new Krypton.Toolkit.KryptonCheckBox();
+        chkShowDebugText = new Krypton.Toolkit.KryptonCheckBox();
+        chkShowRecordingStatus = new Krypton.Toolkit.KryptonCheckBox();
+        chkShowFrameTime = new Krypton.Toolkit.KryptonCheckBox();
+        numMotionThreshold = new Krypton.Toolkit.KryptonNumericUpDown();
+        numMinMotionArea = new Krypton.Toolkit.KryptonNumericUpDown();
+        numPersonThreshold = new Krypton.Toolkit.KryptonNumericUpDown();
+        numRodThreshold = new Krypton.Toolkit.KryptonNumericUpDown();
+        numStrongRodThreshold = new Krypton.Toolkit.KryptonNumericUpDown();
+        numHomeDiffThreshold = new Krypton.Toolkit.KryptonNumericUpDown();
+        numHomeMotionThreshold = new Krypton.Toolkit.KryptonNumericUpDown();
         lblCameraStatus = new ToolStripStatusLabel();
         lblRtspStatus = new ToolStripStatusLabel();
         lblLastFrame = new ToolStripStatusLabel();
@@ -146,15 +146,6 @@ partial class MainForm
         lblDiskStatus = new ToolStripStatusLabel();
         lblErrorStatus = new ToolStripStatusLabel();
         ((System.ComponentModel.ISupportInitialize)picCameraPreview).BeginInit();
-        ((System.ComponentModel.ISupportInitialize)numRtspPort).BeginInit();
-        ((System.ComponentModel.ISupportInitialize)numHttpPort).BeginInit();
-        ((System.ComponentModel.ISupportInitialize)numMotionThreshold).BeginInit();
-        ((System.ComponentModel.ISupportInitialize)numMinMotionArea).BeginInit();
-        ((System.ComponentModel.ISupportInitialize)numPersonThreshold).BeginInit();
-        ((System.ComponentModel.ISupportInitialize)numRodThreshold).BeginInit();
-        ((System.ComponentModel.ISupportInitialize)numStrongRodThreshold).BeginInit();
-        ((System.ComponentModel.ISupportInitialize)numHomeDiffThreshold).BeginInit();
-        ((System.ComponentModel.ISupportInitialize)numHomeMotionThreshold).BeginInit();
         SuspendLayout();
 
         menuStrip.Items.AddRange(new ToolStripItem[] { mnuLanguage });
@@ -250,15 +241,6 @@ partial class MainForm
         StartPosition = FormStartPosition.Manual;
         Text = "DFBlackbox";
         ((System.ComponentModel.ISupportInitialize)picCameraPreview).EndInit();
-        ((System.ComponentModel.ISupportInitialize)numRtspPort).EndInit();
-        ((System.ComponentModel.ISupportInitialize)numHttpPort).EndInit();
-        ((System.ComponentModel.ISupportInitialize)numMotionThreshold).EndInit();
-        ((System.ComponentModel.ISupportInitialize)numMinMotionArea).EndInit();
-        ((System.ComponentModel.ISupportInitialize)numPersonThreshold).EndInit();
-        ((System.ComponentModel.ISupportInitialize)numRodThreshold).EndInit();
-        ((System.ComponentModel.ISupportInitialize)numStrongRodThreshold).EndInit();
-        ((System.ComponentModel.ISupportInitialize)numHomeDiffThreshold).EndInit();
-        ((System.ComponentModel.ISupportInitialize)numHomeMotionThreshold).EndInit();
         ResumeLayout(false);
         PerformLayout();
     }
@@ -432,7 +414,7 @@ partial class MainForm
     private static void SetPanelControlWidth(Control control)
     {
         control.Width = 464;
-        control.Margin = new Padding(0, 4, 0, 4);
+        control.Margin = new Padding(0, 5, 0, 5);
     }
 
     private static FlowLayoutPanel MakeRowPanel(params Control[] controls)
@@ -440,15 +422,15 @@ partial class MainForm
         var panel = new FlowLayoutPanel
         {
             Width = 474,
-            Height = 30,
+            Height = 40,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
-            Margin = new Padding(0, 2, 0, 2)
+            Margin = new Padding(0, 3, 0, 3)
         };
 
         foreach (var control in controls)
         {
-            control.Margin = new Padding(0, 2, 4, 2);
+            control.Margin = new Padding(0, 4, 4, 4);
             panel.Controls.Add(control);
         }
 

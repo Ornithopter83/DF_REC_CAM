@@ -17,6 +17,7 @@ static class Program
         }
 
         ApplicationConfiguration.Initialize();
+        UiTheme.ApplyGlobalPalette();
         bool startInTray = HasArg(args, "tray")
             || ReadStartInTraySetting();
         //bool recordingOnlyMode = HasArg(args, "reconly");

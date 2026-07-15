@@ -58,8 +58,8 @@ public sealed class PlaybackControl : Control
             | ControlStyles.ResizeRedraw
             | ControlStyles.UserPaint,
             true);
-        BackColor = Color.Black;
-        ForeColor = Color.White;
+        BackColor = Color.FromArgb(236, 239, 253);
+        ForeColor = Color.FromArgb(37, 43, 69);
         Font = new Font("Segoe UI", 10F, FontStyle.Bold);
         MinimumSize = new Size(360, 116);
         Cursor = Cursors.Default;
@@ -86,7 +86,7 @@ public sealed class PlaybackControl : Control
         base.OnPaint(e);
         Graphics g = e.Graphics;
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-        g.Clear(Color.Black);
+        g.Clear(BackColor);
 
         int contentWidth = Math.Min(Width - 40, 560);
         int left = (Width - contentWidth) / 2;
@@ -104,9 +104,9 @@ public sealed class PlaybackControl : Control
             ? 0
             : (int)Math.Round(inner.Width * ((Value - Minimum) / (double)(Maximum - Minimum)));
 
-        using var outerPen = new Pen(Color.FromArgb(210, 230, 230, 230), 2F);
-        using var innerBack = new SolidBrush(Color.FromArgb(48, 255, 255, 255));
-        using var progressBrush = new SolidBrush(Color.FromArgb(230, 245, 245, 245));
+        using var outerPen = new Pen(Color.FromArgb(168, 179, 230), 2F);
+        using var innerBack = new SolidBrush(Color.FromArgb(255, 247, 248, 252));
+        using var progressBrush = new SolidBrush(Color.FromArgb(230, 79, 99, 217));
         DrawRoundedRectangle(g, outerPen, outer, outer.Height / 2);
         FillRoundedRectangle(g, innerBack, inner, inner.Height / 2);
         if (progressWidth > 0)
@@ -118,7 +118,7 @@ public sealed class PlaybackControl : Control
 
     private void DrawTimeLabels(Graphics g, int left, int contentWidth)
     {
-        using var textBrush = new SolidBrush(Color.FromArgb(235, 245, 245, 245));
+        using var textBrush = new SolidBrush(Color.FromArgb(37, 43, 69));
         using var smallFont = new Font("Segoe UI", 10F, FontStyle.Bold);
         g.DrawString(CurrentTimeText, smallFont, textBrush, left + 12, 48);
         SizeF totalSize = g.MeasureString(TotalTimeText, smallFont);
@@ -140,11 +140,13 @@ public sealed class PlaybackControl : Control
 
     private void DrawCircleButton(Graphics g, Rectangle rect, string symbol, string hint, float symbolSize, float hintSize)
     {
-        using var fill = new SolidBrush(Color.FromArgb(155, 130, 130, 130));
-        using var hoverFill = new SolidBrush(Color.FromArgb(190, 160, 160, 160));
-        using var textBrush = new SolidBrush(Color.White);
+        using var fill = new SolidBrush(Color.FromArgb(245, 255, 255, 255));
+        using var hoverFill = new SolidBrush(Color.FromArgb(255, 232, 236, 255));
+        using var borderPen = new Pen(Color.FromArgb(168, 179, 230), 1.4F);
+        using var textBrush = new SolidBrush(Color.FromArgb(57, 73, 171));
         bool mouseOver = rect.Contains(PointToClient(MousePosition));
         g.FillEllipse(mouseOver ? hoverFill : fill, rect);
+        g.DrawEllipse(borderPen, rect);
 
         using var symbolFont = new Font("Segoe UI", symbolSize, FontStyle.Bold);
         using var hintFont = new Font("Segoe UI", hintSize, FontStyle.Bold);

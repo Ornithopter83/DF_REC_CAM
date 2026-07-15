@@ -2,11 +2,12 @@
 using DFBlackbox.Core;
 using DFBlackbox.Models;
 using DFBlackbox.Utils;
+using Krypton.Toolkit;
 using OpenCvSharp;
 
 namespace DFBlackbox.Forms;
 
-public sealed partial class MainForm : Form
+public sealed partial class MainForm : KryptonForm
 {
     private AppSettings _settings = new();
     private AppPaths _paths = null!;
@@ -166,6 +167,8 @@ public sealed partial class MainForm : Form
         _startInTray = startInTray;
         _recordingOnlyMode = recordingOnlyMode;
         InitializeComponent();
+        UiTheme.ApplyFormTheme(this);
+        ApplyMainVisualTheme();
         ApplyRecordingOnlyModeUi();
         InitializeFullScreenHint();
         WireEvents();
@@ -443,6 +446,18 @@ public sealed partial class MainForm : Form
         }
 
         picCameraPreview.Invalidate();
+    }
+
+    private void ApplyMainVisualTheme()
+    {
+        sidePanel.BackColor = UiTheme.PanelBack;
+        sideContentPanel.BackColor = UiTheme.PanelBack;
+        sideContentPanel.Padding = new Padding(12);
+        playbackPanel.BackColor = UiTheme.PanelAltBack;
+        playbackControl.BackColor = UiTheme.PanelAltBack;
+        statusStrip.BackColor = UiTheme.PanelAltBack;
+        menuStrip.BackColor = UiTheme.PanelBack;
+        UiTheme.ApplyPrimaryKryptonButtonTheme(btnStartRecording);
     }
 
     private void ApplySettingsToUi()

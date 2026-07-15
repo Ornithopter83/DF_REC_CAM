@@ -1,59 +1,60 @@
 using DFBlackbox.Core;
 using DFBlackbox.Models;
 using DFBlackbox.Utils;
+using Krypton.Toolkit;
 using System.Diagnostics;
 using System.Text.Json;
 
 namespace DFBlackbox.Forms;
 
-public sealed class SettingsForm : Form
+public sealed class SettingsForm : KryptonForm
 {
-    private const int FormContentWidth = 800;
-    private const int WideFieldWidth = 780;
-    private const int HalfFieldWidth = 340;
-    private const int QuarterFieldWidth = 190;
+    private const int FormContentWidth = 920;
+    private const int WideFieldWidth = 900;
+    private const int HalfFieldWidth = 380;
+    private const int QuarterFieldWidth = 210;
     private readonly AppSettings _settings;
     private readonly AppSettings _workingSettings;
     private readonly Action? _applySettings;
     private readonly bool _fullModeSelected;
     private readonly bool _recordingOnlyMode;
-    private readonly RadioButton _rdoIpCamera = new() { Text = Localization.T("Main.IpCamera"), AutoSize = true };
-    private readonly RadioButton _rdoUsbCamera = new() { Text = Localization.T("Main.UsbCamera"), AutoSize = true };
-    private readonly ComboBox _cmbCameraList = new() { DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly ComboBox _cmbResolution = new() { DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly ComboBox _cmbFps = new() { DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly TextBox _txtIpAddress = new();
-    private readonly NumericUpDown _numRtspPort = new() { Minimum = 1, Maximum = 65535, Value = 554 };
-    private readonly NumericUpDown _numHttpPort = new() { Minimum = 1, Maximum = 65535, Value = 80 };
-    private readonly ComboBox _cmbStreamPath = new() { DropDownStyle = ComboBoxStyle.DropDown };
-    private readonly CheckBox _chkUseManualRtspUrl = new() { Text = Localization.T("Main.ManualRtsp"), AutoSize = true };
+    private readonly KryptonRadioButton _rdoIpCamera = new() { Text = Localization.T("Main.IpCamera"), AutoSize = true };
+    private readonly KryptonRadioButton _rdoUsbCamera = new() { Text = Localization.T("Main.UsbCamera"), AutoSize = true };
+    private readonly KryptonComboBox _cmbCameraList = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly KryptonComboBox _cmbResolution = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly KryptonComboBox _cmbFps = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly KryptonTextBox _txtIpAddress = new();
+    private readonly KryptonNumericUpDown _numRtspPort = new() { Minimum = 1, Maximum = 65535, Value = 554 };
+    private readonly KryptonNumericUpDown _numHttpPort = new() { Minimum = 1, Maximum = 65535, Value = 80 };
+    private readonly KryptonComboBox _cmbStreamPath = new() { DropDownStyle = ComboBoxStyle.DropDown };
+    private readonly KryptonCheckBox _chkUseManualRtspUrl = new() { Text = Localization.T("Main.ManualRtsp"), AutoSize = true };
     private readonly Button _btnOpenWebsite = new() { Text = Localization.T("Settings.Web"), Width = 100, Height = 28 };
-    private readonly TextBox _txtManualRtspUrl = new();
-    private readonly TextBox _txtGeneratedRtspUrl = new() { ReadOnly = true };
+    private readonly KryptonTextBox _txtManualRtspUrl = new();
+    private readonly KryptonTextBox _txtGeneratedRtspUrl = new() { ReadOnly = true };
     private readonly Button _btnRefreshCamera = new() { Text = Localization.T("Settings.Refresh") };
     private readonly Button _btnFindOnvifCamera = new() { Text = Localization.T("Settings.FindCamera"), Width = 110, Height = 28 };
-    private readonly ComboBox _cmbOnvifCameras = new() { DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly NumericUpDown _numRoiDiffThreshold = new() { DecimalPlaces = 3, Increment = 0.005M, Minimum = 0, Maximum = 10 };
-    private readonly NumericUpDown _numStopWaitSeconds = new() { Minimum = 1, Maximum = 10 };
-    private readonly NumericUpDown _numPreBufferSeconds = new() { Minimum = 0, Maximum = 60 };
-    private readonly NumericUpDown _numPreBufferMaxMemory = new() { Minimum = 128, Maximum = 8192, Increment = 128 };
-    private readonly NumericUpDown _numDiskStopThreshold = new() { Minimum = 1, Maximum = 100 };
-    private readonly NumericUpDown _numDiskResumeThreshold = new() { Minimum = 1, Maximum = 100 };
-    private readonly NumericUpDown _numRecRetentionDays = new() { Minimum = 1, Maximum = 3650 };
-    private readonly NumericUpDown _numCleanupHour = new() { Minimum = 0, Maximum = 23 };
-    private readonly CheckBox _chkCleanupOnStartup = new() { Text = Localization.T("Settings.CleanupOnStartup"), AutoSize = true };
-    private readonly CheckBox _chkStartInTray = new() { Text = Localization.T("Settings.StartInTray"), AutoSize = true };
-    private readonly CheckBox _chkShowRoi = new() { Text = Localization.T("Main.Roi"), AutoSize = true };
-    private readonly CheckBox _chkShowDebugText = new() { Text = Localization.T("Main.DebugText"), AutoSize = true };
-    private readonly CheckBox _chkShowPlaybackRoiOutlines = new() { Text = Localization.T("Settings.PlaybackRoi"), AutoSize = true };
-    private readonly CheckBox _chkShowPlaybackDiffMessage = new() { Text = Localization.T("Settings.PlaybackDiff"), AutoSize = true };
-    private readonly CheckBox _chkShowPlaybackTrackingCandidate = new() { Text = Localization.T("Settings.PlaybackTracking"), AutoSize = true };
-    private readonly RadioButton _rdoPlaybackOptimizeBalanced = new() { Text = Localization.T("Settings.PlaybackOptimizeBalanced"), AutoSize = true };
-    private readonly RadioButton _rdoPlaybackOptimizePlayback = new() { Text = Localization.T("Settings.PlaybackOptimizePlayback"), AutoSize = true };
-    private readonly RadioButton _rdoPlaybackOptimizeTracking = new() { Text = Localization.T("Settings.PlaybackOptimizeTracking"), AutoSize = true };
-    private readonly NumericUpDown _numFullIntervalMinutes = new() { Minimum = 1, Maximum = 1440 };
-    private readonly ComboBox _cmbVideoBitrate = new() { DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly CheckBox _chkAutoStartFullRecording = new() { Text = Localization.T("Settings.AutoStartFull"), AutoSize = true };
+    private readonly KryptonComboBox _cmbOnvifCameras = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly KryptonNumericUpDown _numRoiDiffThreshold = new() { DecimalPlaces = 3, Increment = 0.005M, Minimum = 0, Maximum = 10 };
+    private readonly KryptonNumericUpDown _numStopWaitSeconds = new() { Minimum = 1, Maximum = 10 };
+    private readonly KryptonNumericUpDown _numPreBufferSeconds = new() { Minimum = 0, Maximum = 60 };
+    private readonly KryptonNumericUpDown _numPreBufferMaxMemory = new() { Minimum = 128, Maximum = 8192, Increment = 128 };
+    private readonly KryptonNumericUpDown _numDiskStopThreshold = new() { Minimum = 1, Maximum = 100 };
+    private readonly KryptonNumericUpDown _numDiskResumeThreshold = new() { Minimum = 1, Maximum = 100 };
+    private readonly KryptonNumericUpDown _numRecRetentionDays = new() { Minimum = 1, Maximum = 3650 };
+    private readonly KryptonNumericUpDown _numCleanupHour = new() { Minimum = 0, Maximum = 23 };
+    private readonly KryptonCheckBox _chkCleanupOnStartup = new() { Text = Localization.T("Settings.CleanupOnStartup"), AutoSize = true };
+    private readonly KryptonCheckBox _chkStartInTray = new() { Text = Localization.T("Settings.StartInTray"), AutoSize = true };
+    private readonly KryptonCheckBox _chkShowRoi = new() { Text = Localization.T("Main.Roi"), AutoSize = true };
+    private readonly KryptonCheckBox _chkShowDebugText = new() { Text = Localization.T("Main.DebugText"), AutoSize = true };
+    private readonly KryptonCheckBox _chkShowPlaybackRoiOutlines = new() { Text = Localization.T("Settings.PlaybackRoi"), AutoSize = true };
+    private readonly KryptonCheckBox _chkShowPlaybackDiffMessage = new() { Text = Localization.T("Settings.PlaybackDiff"), AutoSize = true };
+    private readonly KryptonCheckBox _chkShowPlaybackTrackingCandidate = new() { Text = Localization.T("Settings.PlaybackTracking"), AutoSize = true };
+    private readonly KryptonRadioButton _rdoPlaybackOptimizeBalanced = new() { Text = Localization.T("Settings.PlaybackOptimizeBalanced"), AutoSize = true };
+    private readonly KryptonRadioButton _rdoPlaybackOptimizePlayback = new() { Text = Localization.T("Settings.PlaybackOptimizePlayback"), AutoSize = true };
+    private readonly KryptonRadioButton _rdoPlaybackOptimizeTracking = new() { Text = Localization.T("Settings.PlaybackOptimizeTracking"), AutoSize = true };
+    private readonly KryptonNumericUpDown _numFullIntervalMinutes = new() { Minimum = 1, Maximum = 1440 };
+    private readonly KryptonComboBox _cmbVideoBitrate = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly KryptonCheckBox _chkAutoStartFullRecording = new() { Text = Localization.T("Settings.AutoStartFull"), AutoSize = true };
     private bool _cameraListRefreshInProgress;
     private bool _onvifDiscoveryInProgress;
     private bool _onvifNoCamerasFound;
@@ -70,14 +71,22 @@ public sealed class SettingsForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
-        Width = 860;
-        Height = 820;
+        Width = 1000;
+        Height = 840;
 
         Build();
+        UiTheme.ApplyFormTheme(this);
         LoadSettings();
         SetOnvifComboMessage(Localization.T("Settings.OnvifInitial"), enabled: true);
         UpdateCameraTypeUi();
         UpdateRtspPreview();
+        ApplySettingsVisualTheme();
+    }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        ApplySettingsVisualTheme();
     }
 
     private void Build()
@@ -88,7 +97,7 @@ public sealed class SettingsForm : Form
             AutoScroll = true,
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
-            Padding = new Padding(14, 14, 14, 36)
+            Padding = new Padding(18, 16, 18, 36)
         };
         Controls.Add(panel);
 
@@ -113,9 +122,9 @@ public sealed class SettingsForm : Form
         panel.Controls.Add(Header(Localization.T("Settings.Camera")));
         panel.Controls.Add(Row(_rdoIpCamera, _rdoUsbCamera));
         _btnRefreshCamera.Click += async (_, _) => await RefreshCameraListAsync();
-        panel.Controls.Add(Row(Labeled("USB", _cmbCameraList, HalfFieldWidth), _btnRefreshCamera, Labeled(Localization.IsEnglish ? "Resolution" : "해상도", _cmbResolution, 220), Labeled("FPS", _cmbFps, 130)));
+        panel.Controls.Add(Row(Labeled("USB", _cmbCameraList, HalfFieldWidth), _btnRefreshCamera, Labeled(Localization.IsEnglish ? "Resolution" : "해상도", _cmbResolution, 240), Labeled("FPS", _cmbFps, 150)));
         panel.Controls.Add(Header(Localization.T("Settings.IpCamera")));
-        panel.Controls.Add(Row(Labeled("IP", _txtIpAddress, HalfFieldWidth), Labeled("RTSP", _numRtspPort, 190), Labeled("HTTP", _numHttpPort, 190)));
+        panel.Controls.Add(Row(Labeled("IP", _txtIpAddress, HalfFieldWidth), Labeled("RTSP", _numRtspPort, QuarterFieldWidth), Labeled("HTTP", _numHttpPort, QuarterFieldWidth)));
         _btnFindOnvifCamera.Click += async (_, _) => await FindOnvifCameraAsync();
         _cmbOnvifCameras.SelectionChangeCommitted += (_, _) => ApplySelectedOnvifCamera();
         panel.Controls.Add(Row(_btnFindOnvifCamera, _cmbOnvifCameras));
@@ -125,18 +134,18 @@ public sealed class SettingsForm : Form
         panel.Controls.Add(Row(Labeled(Localization.T("Settings.ManualRtsp"), _txtManualRtspUrl, WideFieldWidth)));
         panel.Controls.Add(Row(Labeled(Localization.T("Settings.RtspUrl"), _txtGeneratedRtspUrl, WideFieldWidth)));
         var detectionHeader = Header(Localization.T("Settings.Detection"));
-        var detectionRow = Row(Labeled(Localization.T("Settings.RoiDiff"), _numRoiDiffThreshold, 160), Labeled(Localization.T("Settings.StopWait"), _numStopWaitSeconds, 205), Labeled(Localization.T("Settings.PreBuffer"), _numPreBufferSeconds, 195), Labeled(Localization.T("Settings.BufferMax"), _numPreBufferMaxMemory, 195));
+        var detectionRow = Row(Labeled(Localization.T("Settings.RoiDiff"), _numRoiDiffThreshold, 200), Labeled(Localization.T("Settings.StopWait"), _numStopWaitSeconds, 220), Labeled(Localization.T("Settings.PreBuffer"), _numPreBufferSeconds, 220), Labeled(Localization.T("Settings.BufferMax"), _numPreBufferMaxMemory, 230));
         panel.Controls.Add(detectionHeader);
         panel.Controls.Add(detectionRow);
         HideInRecordingOnlyMode(detectionHeader, detectionRow);
         panel.Controls.Add(Header(Localization.T("Settings.Recording")));
-        panel.Controls.Add(Row(Labeled(Localization.T("Settings.FullInterval"), _numFullIntervalMinutes, 260), Labeled(Localization.T("Settings.Bitrate"), _cmbVideoBitrate, 260), _chkAutoStartFullRecording));
+        panel.Controls.Add(Row(Labeled(Localization.T("Settings.FullInterval"), _numFullIntervalMinutes, 300), Labeled(Localization.T("Settings.Bitrate"), _cmbVideoBitrate, 300), _chkAutoStartFullRecording));
         panel.Controls.Add(Header(Localization.T("Settings.Storage")));
-        panel.Controls.Add(Row(Labeled(Localization.T("Settings.DiskStop"), _numDiskStopThreshold, 175), Labeled(Localization.T("Settings.DiskResume"), _numDiskResumeThreshold, 175), Labeled(Localization.T("Settings.Retention"), _numRecRetentionDays, 210), Labeled(Localization.T("Settings.CleanupHour"), _numCleanupHour, 175)));
+        panel.Controls.Add(Row(Labeled(Localization.T("Settings.DiskStop"), _numDiskStopThreshold, 210), Labeled(Localization.T("Settings.DiskResume"), _numDiskResumeThreshold, 210), Labeled(Localization.T("Settings.Retention"), _numRecRetentionDays, 230), Labeled(Localization.T("Settings.CleanupHour"), _numCleanupHour, 210)));
         panel.Controls.Add(Row(_chkCleanupOnStartup, _chkStartInTray));
         var overlayHeader = Header(Localization.T("Settings.Overlay"));
         var overlayRow = Row(_chkShowRoi, _chkShowDebugText, _chkShowPlaybackRoiOutlines, _chkShowPlaybackDiffMessage, _chkShowPlaybackTrackingCandidate);
-        var playbackOptimizationRow = Row(Labeled(Localization.T("Settings.PlaybackOptimization"), _rdoPlaybackOptimizeBalanced, 180), _rdoPlaybackOptimizePlayback, _rdoPlaybackOptimizeTracking);
+        var playbackOptimizationRow = Row(Labeled(Localization.T("Settings.PlaybackOptimization"), _rdoPlaybackOptimizeBalanced, 220), _rdoPlaybackOptimizePlayback, _rdoPlaybackOptimizeTracking);
         panel.Controls.Add(overlayHeader);
         panel.Controls.Add(overlayRow);
         panel.Controls.Add(playbackOptimizationRow);
@@ -464,6 +473,12 @@ public sealed class SettingsForm : Form
         _cmbOnvifCameras.Enabled = !usb && !_onvifNoCamerasFound;
         _btnFindOnvifCamera.Enabled = !usb && !_onvifDiscoveryInProgress;
         _txtManualRtspUrl.Enabled = !usb && _chkUseManualRtspUrl.Checked;
+        ApplySettingsVisualTheme();
+    }
+
+    private void ApplySettingsVisualTheme()
+    {
+        UiTheme.ApplyControlTree(this);
     }
 
     private void SetOnvifComboMessage(string message, bool enabled)
@@ -501,11 +516,11 @@ public sealed class SettingsForm : Form
             DialogResult = DialogResult.Cancel;
             Close();
         });
-        ok.Width = 120;
-        apply.Width = 120;
-        cancel.Width = 120;
+        ok.Width = 128;
+        apply.Width = 128;
+        cancel.Width = 128;
         var row = Row(ok, apply, cancel);
-        row.Height = 42;
+        row.Height = 46;
         row.Margin = new Padding(0, 8, 0, 12);
         return row;
     }
@@ -544,7 +559,7 @@ public sealed class SettingsForm : Form
 
     private static Button Button(string text, EventHandler click)
     {
-        var button = new Button { Text = text, Width = 100, Height = 28, Margin = new Padding(0, 2, 6, 2) };
+        var button = new Button { Text = text, Width = 116, Height = 34, Margin = new Padding(0, 4, 10, 4) };
         button.Click += click;
         return button;
     }
@@ -554,12 +569,12 @@ public sealed class SettingsForm : Form
         var row = new FlowLayoutPanel
         {
             Width = FormContentWidth,
-            Height = 34,
+            Height = 42,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
-            Margin = new Padding(0, 2, 0, 2)
+            Margin = new Padding(0, 3, 0, 3)
         };
-        if (controls.Length == 2 && controls[0] is Button button && controls[1] is ComboBox comboBox)
+        if (controls.Length == 2 && controls[0] is Button button && controls[1] is KryptonComboBox comboBox)
         {
             comboBox.Width = row.Width - button.Width - button.Margin.Horizontal - comboBox.Margin.Horizontal - 4;
         }
@@ -574,14 +589,21 @@ public sealed class SettingsForm : Form
 
     private static Panel Labeled(string label, Control control, int width)
     {
-        var panel = new Panel { Width = width, Height = 30, Margin = new Padding(0, 0, 6, 0) };
+        var panel = new Panel { Width = width, Height = 36, Margin = new Padding(0, 2, 10, 2) };
         control.Dock = DockStyle.Fill;
         panel.Controls.Add(control);
-        panel.Controls.Add(new Label { Text = label, Dock = DockStyle.Left, Width = Math.Min(150, width / 2), TextAlign = ContentAlignment.MiddleLeft });
+        panel.Controls.Add(new Label
+        {
+            Text = label,
+            Dock = DockStyle.Left,
+            Width = Math.Min(160, width / 2),
+            TextAlign = ContentAlignment.MiddleLeft,
+            Font = new Font("Segoe UI", 9F, FontStyle.Bold)
+        });
         return panel;
     }
 
-    private static decimal ClampPort(int port, NumericUpDown control)
+    private static decimal ClampPort(int port, KryptonNumericUpDown control)
     {
         return Math.Clamp(port, (int)control.Minimum, (int)control.Maximum);
     }
