@@ -36,6 +36,10 @@ public sealed partial class MainForm : KryptonForm
     private DateTime _lastFrameAt = DateTime.MinValue;
     private DateTime _lastDiskStatusAt = DateTime.MinValue;
     private string _cachedDiskStatus = Localization.T("Status.DiskUnknown");
+    private double _cachedDiskUsedPercent;
+    private long _cachedDiskFreeBytes;
+    private long _cachedDiskTotalBytes;
+    private DateTime _lastDashboardUpdateAt = DateTime.MinValue;
     private int _consecutiveFrameFailures;
     private readonly FpsCounter _algorithmFpsCounter = new();
     private double _lastAlgorithmMs;
@@ -90,7 +94,15 @@ public sealed partial class MainForm : KryptonForm
     private bool _normalTopMost;
     private bool _normalSidePanelVisible;
     private bool _normalStatusStripVisible;
+    private bool _normalTopHeaderVisible;
     private bool _normalPlaybackPanelVisible;
+    private bool _normalVideoCameraVisible;
+    private bool _normalVideoInfoVisible;
+    private bool _normalVideoRecordingVisible;
+    private Padding _normalMainContentPadding;
+    private Padding _normalVideoPanelPadding;
+    private MainWorkspaceTab _activeSideTab = MainWorkspaceTab.Recording;
+    private Bitmap? _settingsGearImage;
     private FullScreenHintControl? _fullScreenHint;
     private System.Windows.Forms.Timer? _fullScreenHintTimer;
     private DateTime _fullScreenHintStartedAt;
@@ -106,6 +118,12 @@ public sealed partial class MainForm : KryptonForm
         ".mkv",
         ".wmv"
     };
+
+    private enum MainWorkspaceTab
+    {
+        Recording,
+        Playback
+    }
 
     private enum RoiEditMode
     {
@@ -167,6 +185,10 @@ public sealed partial class MainForm : KryptonForm
         _startInTray = startInTray;
         _recordingOnlyMode = recordingOnlyMode;
         InitializeComponent();
+        _settingsGearImage = CreateSettingsGearImage();
+        btnSettings.Values.Image = _settingsGearImage;
+        btnSettings.StateCommon.Content.Image!.ImageH = PaletteRelativeAlign.Center;
+        btnSettings.StateCommon.Content.Image!.ImageV = PaletteRelativeAlign.Center;
         UiTheme.ApplyFormTheme(this);
         ApplyMainVisualTheme();
         ApplyRecordingOnlyModeUi();
@@ -185,6 +207,7 @@ public sealed partial class MainForm : KryptonForm
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        ShowSideWorkspace(_activeSideTab);
         ScheduleAutoStartFullRecording();
         if (!_startInTray || _initialTrayHideDone)
         {
@@ -238,6 +261,8 @@ public sealed partial class MainForm : KryptonForm
         Resize += MainForm_Resize;
         KeyDown += MainForm_KeyDown;
         sidePanel.SizeChanged += (_, _) => PositionPlaybackPanel();
+        btnRecordingTab.Click += (_, _) => ShowSideWorkspace(MainWorkspaceTab.Recording);
+        btnPlaybackTab.Click += (_, _) => ShowSideWorkspace(MainWorkspaceTab.Playback);
         btnRefreshCamera.Click += async (_, _) => await RefreshCameraListAsync();
         mnuLanguageKor.Click += (_, _) => ChangeLanguage(Localization.Korean);
         mnuLanguageEng.Click += (_, _) => ChangeLanguage(Localization.English);
@@ -251,14 +276,16 @@ public sealed partial class MainForm : KryptonForm
         btnLoadVideoFile.Click += async (_, _) => await LoadVideoFileAsync();
         btnCameraProperty.Click += (_, _) => OpenCameraPropertyDialog();
         btnOpenStorageFolder.Click += (_, _) => Process.Start(new ProcessStartInfo { FileName = _paths.RecVideos, UseShellExecute = true });
-        btnSettings.Click += (_, _) => OpenSettingsDialog();
+        btnCameraSettings.Click += (_, _) => OpenSettingsDialog("camera");
+        btnRecordingSettings.Click += (_, _) => OpenSettingsDialog("recording");
+        btnStorageSettings.Click += (_, _) => OpenSettingsDialog("storage");
+        btnSettings.Click += (_, _) => OpenSettingsDialog("general");
         btnStartRecording.Click += async (_, _) => await StartSelectedRecordingAsync();
         btnStopRecording.Click += (_, _) => StopSelectedRecording();
         btnSaveHomeReference.Click += (_, _) => SaveDetectionBaselineReference();
-        btnOpenEventList.Click += (_, _) => new EventListForm(_eventLogService).Show(this);
-        playbackControl.PreviousClicked += (_, _) => StepPlaybackFrame(-1);
+        playbackControl.PreviousClicked += (_, _) => StepPlaybackFrame(-GetPlaybackSeekFrameCount());
         playbackControl.PlayPauseClicked += (_, _) => TogglePlayback();
-        playbackControl.NextClicked += (_, _) => StepPlaybackFrame(1);
+        playbackControl.NextClicked += (_, _) => StepPlaybackFrame(GetPlaybackSeekFrameCount());
         playbackControl.SeekRequested += (_, frameIndex) => SeekPlaybackFrame(frameIndex);
         numPersonThreshold.ValueChanged += (_, _) => ReadDetectionSettingsFromUi();
         picCameraPreview.AllowDrop = true;
@@ -416,7 +443,15 @@ public sealed partial class MainForm : KryptonForm
         btnOpenCamera.Text = Localization.T("Main.OpenCamera");
         btnCloseCamera.Text = Localization.T("Main.CloseCamera");
         btnLoadVideoFile.Text = Localization.T("Main.LoadVideo");
-        btnSettings.Text = Localization.T("Main.Settings");
+        btnRecordingTab.Text = Localization.T("Main.RecordingTab");
+        btnPlaybackTab.Text = Localization.T("Main.PlaybackTab");
+        playbackControl.SourceText = Localization.T("Playback.Source");
+        btnSettings.Text = "";
+        btnSettings.AccessibleName = Localization.T("Main.Settings");
+        mainToolTip.SetToolTip(btnSettings, Localization.T("Main.Settings"));
+        btnCameraSettings.Text = Localization.T("Main.CameraSettings");
+        btnRecordingSettings.Text = Localization.T("Main.RecordingSettings");
+        btnStorageSettings.Text = Localization.T("Main.StorageSettings");
         btnOpenStorageFolder.Text = Localization.T("Main.Storage");
         rdoManualRecording.Text = Localization.T("Main.Manual");
         rdoAutoRecording.Text = Localization.T("Main.Auto");
@@ -424,7 +459,7 @@ public sealed partial class MainForm : KryptonForm
         btnStartRecording.Text = Localization.T("Main.StartRecording");
         btnStopRecording.Text = Localization.T("Main.StopRecording");
         btnSaveHomeReference.Text = Localization.T("Main.SaveBaseline");
-        btnOpenEventList.Text = Localization.T("Main.RecentEvents");
+        btnCameraProperty.Text = Localization.T("Main.CameraProperty");
         chkShowPersonBox.Text = Localization.T("Main.MotionBox");
         chkShowMotionMask.Text = Localization.T("Main.MotionBox");
         chkShowRodRoi.Text = Localization.T("Main.Roi");
@@ -432,13 +467,7 @@ public sealed partial class MainForm : KryptonForm
         chkShowDebugText.Text = Localization.T("Main.DebugText");
         chkShowRecordingStatus.Text = Localization.T("Main.RecordingStateOverlay");
 
-        foreach (Control control in sideContentPanel.Controls)
-        {
-            if (control is Label { Tag: string key } label)
-            {
-                label.Text = Localization.T(key);
-            }
-        }
+        ApplyTaggedLocalization(sideContentPanel);
 
         if (_fullScreenHint is not null)
         {
@@ -446,18 +475,135 @@ public sealed partial class MainForm : KryptonForm
         }
 
         picCameraPreview.Invalidate();
+        UpdateDashboardState(force: true);
+    }
+
+    private static void ApplyTaggedLocalization(Control root)
+    {
+        foreach (Control control in root.Controls)
+        {
+            if (control is Label { Tag: string key } label)
+            {
+                label.Text = Localization.T(key);
+            }
+
+            if (control.Controls.Count > 0)
+            {
+                ApplyTaggedLocalization(control);
+            }
+        }
     }
 
     private void ApplyMainVisualTheme()
     {
+        topHeaderPanel.BackColor = Color.FromArgb(8, 27, 51);
+        foreach (Label label in new[] { lblHeaderAppName, lblHeaderCamera, lblHeaderRecording, lblHeaderStorage })
+        {
+            label.BackColor = Color.Transparent;
+            label.ForeColor = Color.White;
+        }
+
+        mainContentPanel.BackColor = Color.FromArgb(245, 247, 250);
+        videoPanel.BackColor = Color.Black;
+        foreach (Label label in new[] { lblVideoCamera, lblVideoInfo, lblVideoRecording })
+        {
+            label.BackColor = Color.Black;
+            label.ForeColor = label == lblVideoRecording ? Color.FromArgb(255, 72, 72) : Color.White;
+        }
+
         sidePanel.BackColor = UiTheme.PanelBack;
+        sideTabHeaderPanel.BackColor = UiTheme.PanelBack;
         sideContentPanel.BackColor = UiTheme.PanelBack;
-        sideContentPanel.Padding = new Padding(12);
-        playbackPanel.BackColor = UiTheme.PanelAltBack;
+        sideContentPanel.Padding = new Padding(10, 48, 6, 8);
+        playbackTabPanel.BackColor = UiTheme.PanelBack;
+        playbackPanel.BackColor = Color.Transparent;
         playbackControl.BackColor = UiTheme.PanelAltBack;
         statusStrip.BackColor = UiTheme.PanelAltBack;
         menuStrip.BackColor = UiTheme.PanelBack;
         UiTheme.ApplyPrimaryKryptonButtonTheme(btnStartRecording);
+        UiTheme.ApplyPrimaryKryptonButtonTheme(btnLoadVideoFile);
+        UiTheme.ApplyDangerKryptonButtonTheme(btnStopRecording);
+        UiTheme.ApplySecondaryKryptonButtonTheme(btnDisconnectCamera);
+        UiTheme.ApplySecondaryKryptonButtonTheme(btnCloseCamera);
+        UiTheme.ApplySecondaryKryptonButtonTheme(btnOpenStorageFolder);
+        UiTheme.ApplySecondaryKryptonButtonTheme(btnSettings);
+        UiTheme.ApplySecondaryKryptonButtonTheme(btnCameraSettings);
+        UiTheme.ApplySecondaryKryptonButtonTheme(btnRecordingSettings);
+        UiTheme.ApplySecondaryKryptonButtonTheme(btnStorageSettings);
+        UiTheme.ApplySecondaryKryptonButtonTheme(btnSaveHomeReference);
+        UiTheme.ApplySecondaryKryptonButtonTheme(btnCameraProperty);
+        ApplySideTabTheme();
+    }
+
+    private void ShowSideWorkspace(MainWorkspaceTab tab)
+    {
+        _activeSideTab = tab;
+        bool showPlayback = tab == MainWorkspaceTab.Playback;
+        sideContentPanel.Visible = !showPlayback;
+        playbackTabPanel.Visible = showPlayback;
+        if (showPlayback)
+        {
+            playbackTabPanel.BringToFront();
+            sideTabHeaderPanel.BringToFront();
+            PositionPlaybackPanel();
+        }
+        else
+        {
+            sideContentPanel.BringToFront();
+            sideTabHeaderPanel.BringToFront();
+        }
+
+        ApplySideTabTheme();
+    }
+
+    private void ApplySideTabTheme()
+    {
+        if (_activeSideTab == MainWorkspaceTab.Recording)
+        {
+            UiTheme.ApplyPrimaryKryptonButtonTheme(btnRecordingTab);
+            UiTheme.ApplySecondaryKryptonButtonTheme(btnPlaybackTab);
+        }
+        else
+        {
+            UiTheme.ApplySecondaryKryptonButtonTheme(btnRecordingTab);
+            UiTheme.ApplyPrimaryKryptonButtonTheme(btnPlaybackTab);
+        }
+    }
+
+    private static Bitmap CreateSettingsGearImage()
+    {
+        var bitmap = new Bitmap(24, 24, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using Graphics graphics = Graphics.FromImage(bitmap);
+        graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        const int toothCount = 8;
+        const float outerRadius = 10F;
+        const float rootRadius = 7.5F;
+        const float centerX = 12F;
+        const float centerY = 12F;
+        var points = new List<PointF>(toothCount * 4);
+        double step = Math.PI * 2 / toothCount;
+        for (int tooth = 0; tooth < toothCount; tooth++)
+        {
+            double centerAngle = -Math.PI / 2 + tooth * step;
+            AddGearPoint(points, centerX, centerY, rootRadius, centerAngle - step * 0.43);
+            AddGearPoint(points, centerX, centerY, outerRadius, centerAngle - step * 0.22);
+            AddGearPoint(points, centerX, centerY, outerRadius, centerAngle + step * 0.22);
+            AddGearPoint(points, centerX, centerY, rootRadius, centerAngle + step * 0.43);
+        }
+
+        using var path = new System.Drawing.Drawing2D.GraphicsPath(System.Drawing.Drawing2D.FillMode.Alternate);
+        path.AddPolygon(points.ToArray());
+        path.AddEllipse(centerX - 2.8F, centerY - 2.8F, 5.6F, 5.6F);
+        using var brush = new SolidBrush(UiTheme.AccentDark);
+        graphics.FillPath(brush, path);
+        return bitmap;
+    }
+
+    private static void AddGearPoint(List<PointF> points, float centerX, float centerY, float radius, double angle)
+    {
+        points.Add(new PointF(
+            centerX + radius * (float)Math.Cos(angle),
+            centerY + radius * (float)Math.Sin(angle)));
     }
 
     private void ApplySettingsToUi()
@@ -899,11 +1045,14 @@ public sealed partial class MainForm : KryptonForm
         _playbackFrameCount = Math.Max(0, (int)Math.Round(capture.Get(VideoCaptureProperties.FrameCount)));
         _playbackDurationSeconds = TryReadMp4DurationSeconds(filePath);
         _playbackFps = DetectPlaybackFps(capture, filePath, _playbackFrameCount);
+        _fpsCounter.Reset();
 
         _isPlaybackMode = true;
         _playbackPlaying = false;
         ConfigurePlaybackTimeline();
+        playbackControl.FpsText = $"FPS: {_playbackFps:0.#}";
         playbackPanel.Visible = true;
+        ShowSideWorkspace(MainWorkspaceTab.Playback);
         PositionPlaybackPanel();
         playbackPanel.BringToFront();
         playbackControl.IsPlaying = false;
@@ -1512,6 +1661,7 @@ public sealed partial class MainForm : KryptonForm
     {
         _playbackFrameIndex = frame.Index;
         _lastFrameAt = DateTime.Now;
+        _fpsCounter.Tick();
         Image? old = picCameraPreview.Image;
         picCameraPreview.Image = frame.TakeBitmap();
         old?.Dispose();
@@ -1653,8 +1803,13 @@ public sealed partial class MainForm : KryptonForm
                 ? _playbackFrameCount / _playbackFps
                 : 0;
         playbackControl.SetPosition(_playbackFrameIndex, FormatPlaybackTime(time), FormatPlaybackTime(totalSeconds));
+        playbackControl.FpsText = $"FPS: {_playbackFps:0.#}";
         lblRtspStatus.Text = $"File: {Path.GetFileName(_playbackPath)}  Frame {_playbackFrameIndex + 1}/{total}";
+        lblLastFrame.Text = Localization.T("Status.Frame", _playbackFrameCount > 0 ? $"{_playbackFrameIndex + 1}/{_playbackFrameCount}" : $"{_playbackFrameIndex + 1}");
+        lblFps.Text = Localization.T("Status.Fps", _fpsCounter.CurrentFps);
     }
+
+    private int GetPlaybackSeekFrameCount() => Math.Max(1, (int)Math.Round(_playbackFps * 5));
 
     private void UpdatePlaybackInfoThrottled(bool force = false)
     {
@@ -1665,7 +1820,6 @@ public sealed partial class MainForm : KryptonForm
         }
 
         _lastPlaybackStatusUpdateAt = now;
-        _fpsCounter.Tick();
         UpdatePlaybackInfo();
         UpdatePlaybackTimeline();
         lblFps.Text = Localization.T("Status.Fps", _fpsCounter.CurrentFps);
@@ -2076,12 +2230,17 @@ public sealed partial class MainForm : KryptonForm
         UpdateControlStates();
         if (DateTime.Now - _lastDiskStatusAt > TimeSpan.FromSeconds(5))
         {
-            _cachedDiskStatus = Localization.T("Status.DiskUsage", DiskUtils.GetUsedPercent(_paths.RecVideos), DiskUtils.FormatBytes(DiskUtils.GetFreeDiskBytes(_paths.RecVideos)));
+            _cachedDiskUsedPercent = DiskUtils.GetUsedPercent(_paths.RecVideos);
+            _cachedDiskFreeBytes = DiskUtils.GetFreeDiskBytes(_paths.RecVideos);
+            string root = Path.GetPathRoot(Path.GetFullPath(_paths.RecVideos)) ?? _paths.RecVideos;
+            _cachedDiskTotalBytes = new DriveInfo(root).TotalSize;
+            _cachedDiskStatus = Localization.T("Status.DiskUsage", _cachedDiskUsedPercent, DiskUtils.FormatBytes(_cachedDiskFreeBytes));
             _lastDiskStatusAt = DateTime.Now;
         }
 
         lblDiskStatus.Text = _cachedDiskStatus;
         lblErrorStatus.Text = Localization.T("Status.ErrorNone");
+        UpdateDashboardState();
     }
 
     private void SaveEventLog(string filePath, DateTime endTime)
@@ -2269,12 +2428,18 @@ public sealed partial class MainForm : KryptonForm
         txtGeneratedRtspUrl.Text = RtspUrlBuilder.Build(cam);
     }
 
-    private void OpenSettingsDialog()
+    private void OpenSettingsDialog(string initialPage = "camera")
     {
         _settingsDialogOpen = true;
         try
         {
-            using var form = new SettingsForm(_settings, ApplySettingsFromDialog, rdoFullRecording.Checked, _recordingOnlyMode);
+            using var form = new SettingsForm(
+                _settings,
+                ApplySettingsFromDialog,
+                rdoFullRecording.Checked,
+                _recordingOnlyMode,
+                initialPage,
+                () => new EventListForm(_eventLogService));
             form.ShowDialog(this);
         }
         finally
@@ -2285,7 +2450,9 @@ public sealed partial class MainForm : KryptonForm
 
     private void ApplySettingsFromDialog()
     {
+        Localization.SetLanguage(_settings.Language);
         ApplySettingsToUi();
+        ApplyLocalization();
         _settingsManager.Save(_settings);
         StartCleanupSchedule(runStartupCleanup: false);
         lblCameraStatus.Text = Localization.T("Status.SettingsSaved");
@@ -3004,6 +3171,7 @@ public sealed partial class MainForm : KryptonForm
             btnStartRecording.Enabled = false;
             btnStopRecording.Enabled = false;
             playbackControl.Enabled = true;
+            UpdateDashboardState();
             return;
         }
 
@@ -3015,6 +3183,149 @@ public sealed partial class MainForm : KryptonForm
         {
             SetWatching(false);
         }
+
+        UpdateDashboardState();
+    }
+
+    private void UpdateDashboardState(bool force = false)
+    {
+        if (_recordingService is null || _paths is null || _settings is null)
+        {
+            return;
+        }
+
+        DateTime now = DateTime.Now;
+        if (!force && now - _lastDashboardUpdateAt < TimeSpan.FromMilliseconds(250))
+        {
+            return;
+        }
+
+        _lastDashboardUpdateAt = now;
+        bool previewOpen = IsCameraPreviewOpen();
+        bool cameraConnected = _cameraService.IsOpened;
+        bool recording = _recordingService.IsRecording;
+        string cameraName = _settings.Camera.IsIpCamera
+            ? Localization.T("Dashboard.IpCamera")
+            : Localization.T("Dashboard.UsbCamera", _settings.Camera.UsbCamera.DeviceIndex);
+        string cameraAddress = _settings.Camera.IsIpCamera
+            ? _settings.Camera.IpCamera.IpAddress
+            : Localization.T("Dashboard.UsbDevice", _settings.Camera.UsbCamera.DeviceIndex);
+        string connectionText = cameraConnected
+            ? Localization.T("Dashboard.Connected")
+            : previewOpen
+                ? Localization.T("Dashboard.Connecting")
+                : Localization.T("Dashboard.Disconnected");
+        string connectionDot = cameraConnected ? "●" : "●";
+
+        lblHeaderCamera.Text = $"{connectionDot} {Localization.T("Dashboard.Camera")}: {connectionText}";
+        lblHeaderCamera.ForeColor = cameraConnected ? UiTheme.Success : UiTheme.Warning;
+        lblCameraCardState.Text = $"{Localization.T("Dashboard.ConnectionState")}    {connectionText}";
+        lblCameraCardState.ForeColor = cameraConnected ? UiTheme.Success : UiTheme.MutedText;
+        lblCameraCardAddress.Text = $"{Localization.T("Dashboard.CameraAddress")}  {cameraAddress}";
+        lblCameraCardStream.Text = previewOpen
+            ? $"{Localization.T("Dashboard.StreamState")}  {Localization.T("Dashboard.StreamActive", _fpsCounter.CurrentFps, _settings.Camera.ActiveWidth, _settings.Camera.ActiveHeight)}"
+            : $"{Localization.T("Dashboard.StreamState")}  {Localization.T("Dashboard.StreamStopped")}";
+
+        TimeSpan elapsed = recording && _currentRecordingStartedAt != default
+            ? now - _currentRecordingStartedAt
+            : TimeSpan.Zero;
+        string elapsedText = FormatElapsed(elapsed);
+        string recordingState = recording ? Localization.T("Dashboard.Recording") : Localization.T("Dashboard.RecordingOff");
+        lblHeaderRecording.Text = recording ? $"● REC {elapsedText}" : $"● {recordingState}";
+        lblHeaderRecording.ForeColor = recording ? UiTheme.Danger : Color.White;
+        lblRecordingCardState.Text = $"{Localization.T("Dashboard.State")}       {recordingState}";
+        lblRecordingCardState.ForeColor = recording ? UiTheme.Danger : UiTheme.MutedText;
+        string activePath = recording ? _recordingService.ActiveRecordingPath : "";
+        string activeFile = string.IsNullOrWhiteSpace(activePath) ? "-" : Path.GetFileName(activePath).Replace(".recording.mp4", ".mp4", StringComparison.OrdinalIgnoreCase);
+        if (recording && File.Exists(activePath))
+        {
+            try
+            {
+                activeFile += $" ({DiskUtils.FormatBytes(new FileInfo(activePath).Length)})";
+            }
+            catch
+            {
+            }
+        }
+
+        lblRecordingCardFile.Text = $"{Localization.T("Dashboard.CurrentFile")}  {activeFile}";
+        lblRecordingCardElapsed.Text = $"{Localization.T("Dashboard.Elapsed")}  {elapsedText}";
+        lblRecordingCardLocation.Text = $"{Localization.T("Dashboard.SaveLocation")}  {CompactPath(_paths.RecVideos, 42)}";
+
+        if (_cachedDiskTotalBytes <= 0)
+        {
+            try
+            {
+                string root = Path.GetPathRoot(Path.GetFullPath(_paths.RecVideos)) ?? _paths.RecVideos;
+                var drive = new DriveInfo(root);
+                _cachedDiskTotalBytes = drive.TotalSize;
+                _cachedDiskFreeBytes = drive.AvailableFreeSpace;
+                _cachedDiskUsedPercent = drive.TotalSize <= 0 ? 0 : (drive.TotalSize - drive.AvailableFreeSpace) * 100.0 / drive.TotalSize;
+            }
+            catch
+            {
+            }
+        }
+
+        string driveRoot = Path.GetPathRoot(Path.GetFullPath(_paths.RecVideos)) ?? _paths.RecVideos;
+        lblHeaderStorage.Text = $"{CompactPath(_paths.RecVideos, 26)} ({DiskUtils.FormatBytes(_cachedDiskFreeBytes)} {Localization.T("Dashboard.Free")})";
+        lblStorageCardDrive.Text = $"{Localization.T("Dashboard.Drive")}  {driveRoot} ({DiskUtils.FormatBytes(_cachedDiskFreeBytes)} {Localization.T("Dashboard.Free")})";
+        long usedBytes = Math.Max(0, _cachedDiskTotalBytes - _cachedDiskFreeBytes);
+        lblStorageCardUsage.Text = $"{Localization.T("Dashboard.Usage")}    {DiskUtils.FormatBytes(usedBytes)} / {DiskUtils.FormatBytes(_cachedDiskTotalBytes)} ({_cachedDiskUsedPercent:0}%)";
+        storageUsageBar.Value = Math.Clamp((int)Math.Round(_cachedDiskUsedPercent), storageUsageBar.Minimum, storageUsageBar.Maximum);
+
+        lblVideoCamera.Text = cameraName;
+        lblVideoInfo.Text = $"FPS: {_fpsCounter.CurrentFps:0}";
+        lblVideoRecording.Text = $"● REC {elapsedText}";
+        lblVideoRecording.Visible = recording && !_fullScreenMode;
+        lblVersion.Text = $"v{GetDisplayVersion()}";
+        PositionVideoOverlays();
+    }
+
+    private static string FormatElapsed(TimeSpan elapsed)
+    {
+        int hours = Math.Max(0, (int)elapsed.TotalHours);
+        return $"{hours:00}:{elapsed.Minutes:00}:{elapsed.Seconds:00}";
+    }
+
+    private static string CompactPath(string path, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(path) || path.Length <= maxLength)
+        {
+            return path;
+        }
+
+        string root = Path.GetPathRoot(path) ?? "";
+        string leaf = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        return $"{root}…{Path.DirectorySeparatorChar}{leaf}";
+    }
+
+    private static string GetDisplayVersion()
+    {
+        string version = Application.ProductVersion;
+        int separator = version.IndexOf('+');
+        return separator >= 0 ? version[..separator] : version;
+    }
+
+    private void PositionVideoOverlays()
+    {
+        if (videoPanel.IsDisposed || picCameraPreview.IsDisposed)
+        {
+            return;
+        }
+
+        const int margin = 14;
+        Rectangle previewBounds = picCameraPreview.Bounds;
+        lblVideoRecording.Location = new System.Drawing.Point(
+            Math.Max(margin, previewBounds.Right - lblVideoRecording.Width - margin - videoPanel.Padding.Right),
+            previewBounds.Top + margin);
+        lblVideoCamera.Location = new System.Drawing.Point(previewBounds.Left + margin, Math.Max(margin, previewBounds.Bottom - lblVideoCamera.Height - margin));
+        lblVideoInfo.Location = new System.Drawing.Point(
+            Math.Max(margin, previewBounds.Right - lblVideoInfo.Width - margin - videoPanel.Padding.Right),
+            Math.Max(margin, previewBounds.Bottom - lblVideoInfo.Height - margin));
+        lblVideoCamera.BringToFront();
+        lblVideoInfo.BringToFront();
+        lblVideoRecording.BringToFront();
     }
 
     private void SetLatestFrame(Mat frame)
@@ -3189,12 +3500,24 @@ public sealed partial class MainForm : KryptonForm
         _normalBounds = Bounds;
         _normalSidePanelVisible = sidePanel.Visible;
         _normalStatusStripVisible = statusStrip.Visible;
+        _normalTopHeaderVisible = topHeaderPanel.Visible;
         _normalPlaybackPanelVisible = playbackPanel.Visible;
+        _normalVideoCameraVisible = lblVideoCamera.Visible;
+        _normalVideoInfoVisible = lblVideoInfo.Visible;
+        _normalVideoRecordingVisible = lblVideoRecording.Visible;
+        _normalMainContentPadding = mainContentPanel.Padding;
+        _normalVideoPanelPadding = videoPanel.Padding;
 
         _fullScreenMode = true;
         sidePanel.Visible = false;
         statusStrip.Visible = false;
+        topHeaderPanel.Visible = false;
         playbackPanel.Visible = false;
+        lblVideoCamera.Visible = false;
+        lblVideoInfo.Visible = false;
+        lblVideoRecording.Visible = false;
+        mainContentPanel.Padding = Padding.Empty;
+        videoPanel.Padding = Padding.Empty;
 
         SuspendLayout();
         WindowState = FormWindowState.Normal;
@@ -3227,7 +3550,13 @@ public sealed partial class MainForm : KryptonForm
         WindowState = _normalWindowState;
         sidePanel.Visible = _normalSidePanelVisible;
         statusStrip.Visible = _normalStatusStripVisible;
+        topHeaderPanel.Visible = _normalTopHeaderVisible;
         playbackPanel.Visible = _normalPlaybackPanelVisible;
+        lblVideoCamera.Visible = _normalVideoCameraVisible;
+        lblVideoInfo.Visible = _normalVideoInfoVisible;
+        lblVideoRecording.Visible = _normalVideoRecordingVisible;
+        mainContentPanel.Padding = _normalMainContentPadding;
+        videoPanel.Padding = _normalVideoPanelPadding;
         ResumeLayout(true);
         PositionPlaybackPanel();
     }
@@ -3324,6 +3653,7 @@ public sealed partial class MainForm : KryptonForm
     {
         PositionFullScreenHint();
         PositionPlaybackPanel();
+        PositionVideoOverlays();
         if (WindowState == FormWindowState.Minimized)
         {
             HideToTray();
@@ -3337,13 +3667,13 @@ public sealed partial class MainForm : KryptonForm
             return;
         }
 
-        int availableWidth = sidePanel.ClientSize.Width - playbackPanel.Padding.Horizontal;
+        int availableWidth = playbackPanel.ClientSize.Width - playbackPanel.Padding.Horizontal;
         if (availableWidth <= 0)
         {
             return;
         }
 
-        playbackControl.Width = Math.Max(1, Math.Min(428, availableWidth));
+        playbackControl.Width = Math.Max(1, availableWidth);
     }
 
     private void HideToTray()

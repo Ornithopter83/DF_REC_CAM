@@ -21,4 +21,11 @@ public sealed class FpsCounter
         _frames = 0;
         _last = now;
     }
+
+    public void Reset()
+    {
+        _frames = 0;
+        _last = DateTime.Now;
+        CurrentFps = 0;
+    }
 }

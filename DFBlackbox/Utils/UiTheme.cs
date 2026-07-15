@@ -20,6 +20,11 @@ public static class UiTheme
     public static readonly Color DisabledBack = Color.FromArgb(236, 239, 245);
     public static readonly Color DisabledBorder = Color.FromArgb(209, 214, 230);
     public static readonly Color DisabledText = Color.FromArgb(138, 145, 168);
+    public static readonly Color Success = Color.FromArgb(40, 167, 69);
+    public static readonly Color Warning = Color.FromArgb(255, 193, 7);
+    public static readonly Color Danger = Color.FromArgb(220, 53, 69);
+    public static readonly Color Info = Color.FromArgb(23, 162, 184);
+    public static readonly Color HeaderBack = Color.FromArgb(8, 27, 51);
 
     public static void ApplyGlobalPalette()
     {
@@ -206,6 +211,46 @@ public static class UiTheme
         button.OverrideDefault.Back.Color2 = AccentDark;
         button.OverrideDefault.Border.Color1 = AccentPressed;
         button.OverrideDefault.Border.Color2 = AccentPressed;
+    }
+
+    public static void ApplySecondaryKryptonButtonTheme(KryptonButton button)
+    {
+        ApplyKryptonButtonTheme(button);
+        button.StateCommon.Back.Color1 = Color.White;
+        button.StateCommon.Back.Color2 = Color.White;
+        button.StateCommon.Border.Color1 = Border;
+        button.StateCommon.Border.Color2 = Border;
+        button.StateCommon.Content.ShortText.Color1 = Text;
+        button.StateTracking.Back.Color1 = AccentSoft;
+        button.StateTracking.Back.Color2 = AccentSoft;
+        button.StateTracking.Border.Color1 = Accent;
+        button.StateTracking.Border.Color2 = Accent;
+        button.StateTracking.Content.ShortText.Color1 = AccentDark;
+        button.StatePressed.Back.Color1 = PanelAltBack;
+        button.StatePressed.Back.Color2 = PanelAltBack;
+        button.StatePressed.Content.ShortText.Color1 = AccentPressed;
+        button.OverrideDefault.Back.Color1 = Color.White;
+        button.OverrideDefault.Back.Color2 = Color.White;
+        button.OverrideDefault.Border.Color1 = Border;
+        button.OverrideDefault.Border.Color2 = Border;
+    }
+
+    public static void ApplyDangerKryptonButtonTheme(KryptonButton button)
+    {
+        ApplyKryptonButtonTheme(button);
+        Color dangerBorder = Color.FromArgb(176, 38, 52);
+        button.StateCommon.Back.Color1 = Danger;
+        button.StateCommon.Back.Color2 = Danger;
+        button.StateCommon.Border.Color1 = dangerBorder;
+        button.StateCommon.Border.Color2 = dangerBorder;
+        button.StateTracking.Back.Color1 = Color.FromArgb(232, 74, 88);
+        button.StateTracking.Back.Color2 = Color.FromArgb(232, 74, 88);
+        button.StatePressed.Back.Color1 = dangerBorder;
+        button.StatePressed.Back.Color2 = dangerBorder;
+        button.OverrideDefault.Back.Color1 = Danger;
+        button.OverrideDefault.Back.Color2 = Danger;
+        button.OverrideDefault.Border.Color1 = dangerBorder;
+        button.OverrideDefault.Border.Color2 = dangerBorder;
     }
 
     private static void ApplyKryptonInputTheme(KryptonTextBox textBox)

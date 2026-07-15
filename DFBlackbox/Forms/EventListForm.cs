@@ -1,10 +1,11 @@
 using System.Diagnostics;
 using DFBlackbox.Core;
 using DFBlackbox.Utils;
+using Krypton.Toolkit;
 
 namespace DFBlackbox.Forms;
 
-public sealed class EventListForm : Form
+public sealed class EventListForm : KryptonForm
 {
     private readonly EventLogService _eventLogService;
     private readonly DataGridView _grid = new() { Dock = DockStyle.Fill, ReadOnly = true, AutoGenerateColumns = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect };
@@ -13,8 +14,10 @@ public sealed class EventListForm : Form
     {
         _eventLogService = eventLogService;
         Text = Localization.T("Event.Title");
+        StartPosition = FormStartPosition.CenterParent;
         Width = 980;
         Height = 520;
+        MinimumSize = new Size(760, 420);
 
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 42 };
         var refresh = new Button { Text = Localization.T("Event.Refresh"), Width = 90 };
@@ -30,6 +33,8 @@ public sealed class EventListForm : Form
         Controls.Add(toolbar);
         ConfigureGrid();
         LoadEvents();
+        UiTheme.ApplyFormTheme(this);
+        ApplyGridTheme();
     }
 
     private void ConfigureGrid()
@@ -38,6 +43,23 @@ public sealed class EventListForm : Form
         _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(Models.EventLog.StartTime), HeaderText = Localization.T("Event.Start"), Width = 160 });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(Models.EventLog.EndTime), HeaderText = Localization.T("Event.End"), Width = 160 });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(Models.EventLog.TriggerReason), HeaderText = Localization.T("Event.Trigger"), AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+    }
+
+    private void ApplyGridTheme()
+    {
+        _grid.BackgroundColor = UiTheme.WindowBack;
+        _grid.BorderStyle = BorderStyle.None;
+        _grid.EnableHeadersVisualStyles = false;
+        _grid.ColumnHeadersDefaultCellStyle.BackColor = UiTheme.HeaderBack;
+        _grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+        _grid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        _grid.ColumnHeadersHeight = 34;
+        _grid.DefaultCellStyle.BackColor = Color.White;
+        _grid.DefaultCellStyle.ForeColor = UiTheme.Text;
+        _grid.DefaultCellStyle.SelectionBackColor = UiTheme.AccentSoft;
+        _grid.DefaultCellStyle.SelectionForeColor = UiTheme.AccentDark;
+        _grid.RowHeadersVisible = false;
+        _grid.RowTemplate.Height = 30;
     }
 
     private void LoadEvents()

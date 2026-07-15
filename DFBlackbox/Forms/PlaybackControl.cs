@@ -1,3 +1,5 @@
+using System.Drawing.Drawing2D;
+
 namespace DFBlackbox.Forms;
 
 public sealed class PlaybackControl : Control
@@ -5,6 +7,8 @@ public sealed class PlaybackControl : Control
     private readonly Rectangle[] _buttonRects = new Rectangle[3];
     private Rectangle _timelineRect;
     private bool _draggingTimeline;
+    private string _fpsText = "FPS: 0";
+    private string _sourceText = "녹화 파일 재생";
 
     public event EventHandler? PreviousClicked;
     public event EventHandler? PlayPauseClicked;
@@ -50,6 +54,26 @@ public sealed class PlaybackControl : Control
     public string CurrentTimeText { get; set; } = "00:00";
     public string TotalTimeText { get; set; } = "00:00";
 
+    public string FpsText
+    {
+        get => _fpsText;
+        set
+        {
+            _fpsText = value;
+            Invalidate();
+        }
+    }
+
+    public string SourceText
+    {
+        get => _sourceText;
+        set
+        {
+            _sourceText = value;
+            Invalidate();
+        }
+    }
+
     public PlaybackControl()
     {
         SetStyle(
@@ -58,10 +82,10 @@ public sealed class PlaybackControl : Control
             | ControlStyles.ResizeRedraw
             | ControlStyles.UserPaint,
             true);
-        BackColor = Color.FromArgb(236, 239, 253);
-        ForeColor = Color.FromArgb(37, 43, 69);
+        BackColor = Color.FromArgb(245, 247, 250);
+        ForeColor = Color.FromArgb(17, 35, 61);
         Font = new Font("Segoe UI", 10F, FontStyle.Bold);
-        MinimumSize = new Size(360, 116);
+        MinimumSize = new Size(320, 228);
         Cursor = Cursors.Default;
     }
 
@@ -85,88 +109,172 @@ public sealed class PlaybackControl : Control
     {
         base.OnPaint(e);
         Graphics g = e.Graphics;
-        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
         g.Clear(BackColor);
 
-        int contentWidth = Math.Min(Width - 40, 560);
-        int left = (Width - contentWidth) / 2;
-        _timelineRect = new Rectangle(left, 24, contentWidth, 18);
+        Rectangle card = new(2, 2, Math.Max(1, Width - 5), Math.Max(1, Height - 5));
+        using (var shadow = new SolidBrush(Color.FromArgb(24, 22, 44, 82)))
+        {
+            FillRoundedRectangle(g, shadow, new Rectangle(card.Left + 1, card.Top + 2, card.Width, card.Height), 12);
+        }
+
+        using (var cardBrush = new SolidBrush(Color.White))
+        using (var cardPen = new Pen(Color.FromArgb(218, 225, 236), 1F))
+        {
+            FillRoundedRectangle(g, cardBrush, card, 12);
+            DrawRoundedRectangle(g, cardPen, card, 12);
+        }
+
+        DrawTimeLabels(g, card);
+        _timelineRect = new Rectangle(card.Left + 20, card.Top + 42, Math.Max(1, card.Width - 40), 22);
         DrawTimeline(g);
-        DrawTimeLabels(g, left, contentWidth);
-        DrawButtons(g, left, contentWidth);
+        DrawButtons(g, card);
+        DrawStatusPills(g, card);
+    }
+
+    private void DrawTimeLabels(Graphics g, Rectangle card)
+    {
+        using var textBrush = new SolidBrush(ForeColor);
+        using var timeFont = new Font("Segoe UI", 9.5F, FontStyle.Bold);
+        g.DrawString(CurrentTimeText, timeFont, textBrush, card.Left + 20, card.Top + 14);
+        SizeF totalSize = g.MeasureString(TotalTimeText, timeFont);
+        g.DrawString(TotalTimeText, timeFont, textBrush, card.Right - totalSize.Width - 20, card.Top + 14);
     }
 
     private void DrawTimeline(Graphics g)
     {
-        Rectangle outer = new Rectangle(_timelineRect.Left, _timelineRect.Top, _timelineRect.Width, _timelineRect.Height);
-        Rectangle inner = Rectangle.Inflate(outer, -5, -6);
-        int progressWidth = Maximum <= Minimum
-            ? 0
-            : (int)Math.Round(inner.Width * ((Value - Minimum) / (double)(Maximum - Minimum)));
+        Rectangle track = new(_timelineRect.Left, _timelineRect.Top + 7, _timelineRect.Width, 8);
+        double ratio = Maximum <= Minimum ? 0 : (Value - Minimum) / (double)(Maximum - Minimum);
+        int progressWidth = (int)Math.Round(track.Width * ratio);
 
-        using var outerPen = new Pen(Color.FromArgb(168, 179, 230), 2F);
-        using var innerBack = new SolidBrush(Color.FromArgb(255, 247, 248, 252));
-        using var progressBrush = new SolidBrush(Color.FromArgb(230, 79, 99, 217));
-        DrawRoundedRectangle(g, outerPen, outer, outer.Height / 2);
-        FillRoundedRectangle(g, innerBack, inner, inner.Height / 2);
+        using var trackBrush = new SolidBrush(Color.FromArgb(224, 230, 239));
+        using var progressBrush = new SolidBrush(Color.FromArgb(45, 103, 230));
+        FillRoundedRectangle(g, trackBrush, track, 4);
         if (progressWidth > 0)
         {
-            Rectangle progress = new Rectangle(inner.Left, inner.Top, Math.Max(3, progressWidth), inner.Height);
-            FillRoundedRectangle(g, progressBrush, progress, progress.Height / 2);
+            FillRoundedRectangle(g, progressBrush, new Rectangle(track.Left, track.Top, Math.Max(4, progressWidth), track.Height), 4);
+        }
+
+        int thumbX = track.Left + Math.Clamp(progressWidth, 0, track.Width);
+        Rectangle thumb = new(thumbX - 8, track.Top - 5, 18, 18);
+        using var thumbFill = new SolidBrush(Color.White);
+        using var thumbPen = new Pen(Color.FromArgb(66, 120, 235), 2F);
+        g.FillEllipse(thumbFill, thumb);
+        g.DrawEllipse(thumbPen, thumb);
+    }
+
+    private void DrawButtons(Graphics g, Rectangle card)
+    {
+        int centerX = card.Left + card.Width / 2;
+        const int sideSize = 58;
+        const int playSize = 74;
+        int playTop = card.Top + 78;
+        _buttonRects[0] = new Rectangle(centerX - 116, playTop + 8, sideSize, sideSize);
+        _buttonRects[1] = new Rectangle(centerX - playSize / 2, playTop, playSize, playSize);
+        _buttonRects[2] = new Rectangle(centerX + 58, playTop + 8, sideSize, sideSize);
+
+        DrawSeekButton(g, _buttonRects[0], backwards: true);
+        DrawPlayButton(g, _buttonRects[1]);
+        DrawSeekButton(g, _buttonRects[2], backwards: false);
+    }
+
+    private void DrawSeekButton(Graphics g, Rectangle rect, bool backwards)
+    {
+        DrawButtonSurface(g, rect, emphasized: false);
+        bool hover = rect.Contains(PointToClient(MousePosition));
+        Color iconColor = hover ? Color.FromArgb(25, 83, 206) : Color.FromArgb(45, 103, 230);
+        using var pen = new Pen(iconColor, 2.4F) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        Rectangle arc = Rectangle.Inflate(rect, -15, -15);
+        g.DrawArc(pen, arc, backwards ? 205 : -25, 285);
+
+        PointF tip = backwards
+            ? new PointF(arc.Left - 1, arc.Top + arc.Height * 0.45F)
+            : new PointF(arc.Right + 1, arc.Top + arc.Height * 0.45F);
+        PointF[] arrow = backwards
+            ? new[] { tip, new PointF(tip.X + 8, tip.Y - 4), new PointF(tip.X + 7, tip.Y + 5) }
+            : new[] { tip, new PointF(tip.X - 8, tip.Y - 4), new PointF(tip.X - 7, tip.Y + 5) };
+        using var iconBrush = new SolidBrush(iconColor);
+        g.FillPolygon(iconBrush, arrow);
+
+        using var numberFont = new Font("Segoe UI", 10F, FontStyle.Bold);
+        string number = "5";
+        SizeF size = g.MeasureString(number, numberFont);
+        g.DrawString(number, numberFont, iconBrush, rect.Left + (rect.Width - size.Width) / 2, rect.Top + (rect.Height - size.Height) / 2 + 1);
+    }
+
+    private void DrawPlayButton(Graphics g, Rectangle rect)
+    {
+        DrawButtonSurface(g, rect, emphasized: true);
+        using var iconBrush = new SolidBrush(Color.FromArgb(45, 103, 230));
+        if (IsPlaying)
+        {
+            int barWidth = 7;
+            int barHeight = 28;
+            int top = rect.Top + (rect.Height - barHeight) / 2;
+            g.FillRectangle(iconBrush, rect.Left + rect.Width / 2 - 12, top, barWidth, barHeight);
+            g.FillRectangle(iconBrush, rect.Left + rect.Width / 2 + 5, top, barWidth, barHeight);
+        }
+        else
+        {
+            PointF[] triangle =
+            {
+                new(rect.Left + rect.Width * 0.42F, rect.Top + rect.Height * 0.30F),
+                new(rect.Left + rect.Width * 0.42F, rect.Top + rect.Height * 0.70F),
+                new(rect.Left + rect.Width * 0.70F, rect.Top + rect.Height * 0.50F)
+            };
+            g.FillPolygon(iconBrush, triangle);
         }
     }
 
-    private void DrawTimeLabels(Graphics g, int left, int contentWidth)
+    private void DrawButtonSurface(Graphics g, Rectangle rect, bool emphasized)
     {
-        using var textBrush = new SolidBrush(Color.FromArgb(37, 43, 69));
-        using var smallFont = new Font("Segoe UI", 10F, FontStyle.Bold);
-        g.DrawString(CurrentTimeText, smallFont, textBrush, left + 12, 48);
-        SizeF totalSize = g.MeasureString(TotalTimeText, smallFont);
-        g.DrawString(TotalTimeText, smallFont, textBrush, left + contentWidth - totalSize.Width - 12, 48);
+        bool hover = rect.Contains(PointToClient(MousePosition));
+        using var fill = new SolidBrush(hover ? Color.FromArgb(239, 245, 255) : Color.White);
+        using var border = new Pen(emphasized ? Color.FromArgb(134, 170, 245) : Color.FromArgb(221, 228, 239), emphasized ? 2.2F : 1.2F);
+        using var shadow = new SolidBrush(Color.FromArgb(22, 22, 44, 82));
+        Rectangle shadowRect = new(rect.Left + 1, rect.Top + 3, rect.Width, rect.Height);
+        g.FillEllipse(shadow, shadowRect);
+        g.FillEllipse(fill, rect);
+        g.DrawEllipse(border, rect);
     }
 
-    private void DrawButtons(Graphics g, int left, int contentWidth)
+    private void DrawStatusPills(Graphics g, Rectangle card)
     {
-        int centerX = left + contentWidth / 2;
-        int y = 72;
-        _buttonRects[0] = new Rectangle(centerX - 102, y, 46, 46);
-        _buttonRects[1] = new Rectangle(centerX - 23, y - 6, 56, 56);
-        _buttonRects[2] = new Rectangle(centerX + 66, y, 46, 46);
-
-        DrawCircleButton(g, _buttonRects[0], "<<", "[ - ]", 10F, 8F);
-        DrawCircleButton(g, _buttonRects[1], IsPlaying ? "||" : ">", "[ / ]", 16F, 9F);
-        DrawCircleButton(g, _buttonRects[2], ">>", "[ + ]", 10F, 8F);
+        int y = card.Bottom - 48;
+        int sourceWidth = Math.Min(160, Math.Max(125, card.Width / 2 - 18));
+        Rectangle source = new(card.Left + 16, y, sourceWidth, 34);
+        Rectangle fps = new(card.Right - 112, y, 96, 34);
+        DrawPill(g, source, SourceText, showStatusDot: false);
+        DrawPill(g, fps, FpsText, showStatusDot: true);
     }
 
-    private void DrawCircleButton(Graphics g, Rectangle rect, string symbol, string hint, float symbolSize, float hintSize)
+    private void DrawPill(Graphics g, Rectangle rect, string text, bool showStatusDot)
     {
-        using var fill = new SolidBrush(Color.FromArgb(245, 255, 255, 255));
-        using var hoverFill = new SolidBrush(Color.FromArgb(255, 232, 236, 255));
-        using var borderPen = new Pen(Color.FromArgb(168, 179, 230), 1.4F);
-        using var textBrush = new SolidBrush(Color.FromArgb(57, 73, 171));
-        bool mouseOver = rect.Contains(PointToClient(MousePosition));
-        g.FillEllipse(mouseOver ? hoverFill : fill, rect);
-        g.DrawEllipse(borderPen, rect);
+        using var fill = new SolidBrush(Color.FromArgb(248, 250, 253));
+        using var border = new Pen(Color.FromArgb(219, 226, 237), 1F);
+        using var textBrush = new SolidBrush(Color.FromArgb(31, 58, 101));
+        FillRoundedRectangle(g, fill, rect, 12);
+        DrawRoundedRectangle(g, border, rect, 12);
 
-        using var symbolFont = new Font("Segoe UI", symbolSize, FontStyle.Bold);
-        using var hintFont = new Font("Segoe UI", hintSize, FontStyle.Bold);
-        SizeF symbolSizeMeasured = g.MeasureString(symbol, symbolFont);
-        SizeF hintSizeMeasured = g.MeasureString(hint, hintFont);
-        int gap = rect.Height >= 54 ? 1 : 0;
-        float totalHeight = symbolSizeMeasured.Height + hintSizeMeasured.Height + gap;
-        float top = rect.Top + (rect.Height - totalHeight) / 2 - 1;
-        g.DrawString(
-            symbol,
-            symbolFont,
-            textBrush,
-            rect.Left + (rect.Width - symbolSizeMeasured.Width) / 2,
-            top);
-        g.DrawString(
-            hint,
-            hintFont,
-            textBrush,
-            rect.Left + (rect.Width - hintSizeMeasured.Width) / 2,
-            top + symbolSizeMeasured.Height + gap - 2);
+        int iconSpace = showStatusDot ? 0 : 20;
+        if (!showStatusDot)
+        {
+            using var cameraPen = new Pen(Color.FromArgb(45, 103, 230), 2F);
+            Rectangle body = new(rect.Left + 11, rect.Top + 11, 13, 12);
+            g.DrawRectangle(cameraPen, body);
+            g.DrawLine(cameraPen, body.Right, body.Top + 3, body.Right + 6, body.Top);
+            g.DrawLine(cameraPen, body.Right + 6, body.Top, body.Right + 6, body.Bottom);
+            g.DrawLine(cameraPen, body.Right + 6, body.Bottom, body.Right, body.Bottom - 3);
+        }
+
+        using var pillFont = new Font("Segoe UI", 8.5F, FontStyle.Bold);
+        Rectangle textRect = new(rect.Left + 10 + iconSpace, rect.Top, rect.Width - 20 - iconSpace - (showStatusDot ? 13 : 0), rect.Height);
+        TextRenderer.DrawText(g, text, pillFont, textRect, textBrush.Color, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+        if (showStatusDot)
+        {
+            using var dot = new SolidBrush(Color.FromArgb(29, 165, 125));
+            g.FillEllipse(dot, rect.Right - 17, rect.Top + 13, 8, 8);
+        }
     }
 
     protected override void OnMouseDown(MouseEventArgs e)
@@ -201,10 +309,9 @@ public sealed class PlaybackControl : Control
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
-        Cursor = _timelineRect.Contains(e.Location)
-            || _buttonRects.Any(rect => rect.Contains(e.Location))
-                ? Cursors.Hand
-                : Cursors.Default;
+        Cursor = _timelineRect.Contains(e.Location) || _buttonRects.Any(rect => rect.Contains(e.Location))
+            ? Cursors.Hand
+            : Cursors.Default;
         if (_draggingTimeline)
         {
             RequestSeekFromPoint(e.X);
@@ -234,28 +341,33 @@ public sealed class PlaybackControl : Control
             return;
         }
 
-        Rectangle inner = Rectangle.Inflate(_timelineRect, -5, -6);
-        double ratio = Math.Clamp((x - inner.Left) / (double)Math.Max(1, inner.Width), 0, 1);
+        double ratio = Math.Clamp((x - _timelineRect.Left) / (double)Math.Max(1, _timelineRect.Width), 0, 1);
         int requested = Minimum + (int)Math.Round((Maximum - Minimum) * ratio);
         SeekRequested?.Invoke(this, requested);
     }
 
     private static void DrawRoundedRectangle(Graphics g, Pen pen, Rectangle rect, int radius)
     {
-        using var path = RoundedPath(rect, radius);
+        using GraphicsPath path = RoundedPath(rect, radius);
         g.DrawPath(pen, path);
     }
 
     private static void FillRoundedRectangle(Graphics g, Brush brush, Rectangle rect, int radius)
     {
-        using var path = RoundedPath(rect, radius);
+        using GraphicsPath path = RoundedPath(rect, radius);
         g.FillPath(brush, path);
     }
 
-    private static System.Drawing.Drawing2D.GraphicsPath RoundedPath(Rectangle rect, int radius)
+    private static GraphicsPath RoundedPath(Rectangle rect, int radius)
     {
-        System.Drawing.Drawing2D.GraphicsPath path = new System.Drawing.Drawing2D.GraphicsPath();
-        int diameter = radius * 2;
+        var path = new GraphicsPath();
+        int diameter = Math.Min(radius * 2, Math.Min(rect.Width, rect.Height));
+        if (diameter <= 0)
+        {
+            path.AddRectangle(rect);
+            return path;
+        }
+
         path.AddArc(rect.Left, rect.Top, diameter, diameter, 180, 90);
         path.AddArc(rect.Right - diameter, rect.Top, diameter, diameter, 270, 90);
         path.AddArc(rect.Right - diameter, rect.Bottom - diameter, diameter, diameter, 0, 90);

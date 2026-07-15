@@ -9,15 +9,16 @@ namespace DFBlackbox.Forms;
 
 public sealed class SettingsForm : KryptonForm
 {
-    private const int FormContentWidth = 920;
-    private const int WideFieldWidth = 900;
-    private const int HalfFieldWidth = 380;
-    private const int QuarterFieldWidth = 210;
+    private const int FormContentWidth = 680;
+    private const int WideFieldWidth = 660;
+    private const int HalfFieldWidth = 290;
+    private const int QuarterFieldWidth = 145;
     private readonly AppSettings _settings;
     private readonly AppSettings _workingSettings;
     private readonly Action? _applySettings;
     private readonly bool _fullModeSelected;
     private readonly bool _recordingOnlyMode;
+    private readonly Func<Form>? _createEventLog;
     private readonly KryptonRadioButton _rdoIpCamera = new() { Text = Localization.T("Main.IpCamera"), AutoSize = true };
     private readonly KryptonRadioButton _rdoUsbCamera = new() { Text = Localization.T("Main.UsbCamera"), AutoSize = true };
     private readonly KryptonComboBox _cmbCameraList = new() { DropDownStyle = ComboBoxStyle.DropDownList };
@@ -55,24 +56,45 @@ public sealed class SettingsForm : KryptonForm
     private readonly KryptonNumericUpDown _numFullIntervalMinutes = new() { Minimum = 1, Maximum = 1440 };
     private readonly KryptonComboBox _cmbVideoBitrate = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly KryptonCheckBox _chkAutoStartFullRecording = new() { Text = Localization.T("Settings.AutoStartFull"), AutoSize = true };
+    private readonly KryptonComboBox _cmbLanguage = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly KryptonTextBox _txtRecordingPath = new() { ReadOnly = true };
+    private readonly KryptonNumericUpDown _numReconnectDelay = new() { Minimum = 1, Maximum = 120 };
+    private readonly KryptonNumericUpDown _numNoFrameTimeout = new() { Minimum = 1, Maximum = 120 };
+    private readonly Dictionary<string, Control> _pages = new();
+    private readonly Dictionary<string, KryptonButton> _navigationButtons = new();
+    private Panel _contentHost = null!;
+    private FlowLayoutPanel _navigationPanel = null!;
+    private Panel _bottomPanel = null!;
+    private Control _usbCameraSection = null!;
+    private Control _ipCameraSection = null!;
+    private string _selectedPage = "camera";
     private bool _cameraListRefreshInProgress;
     private bool _onvifDiscoveryInProgress;
     private bool _onvifNoCamerasFound;
 
-    public SettingsForm(AppSettings settings, Action? applySettings = null, bool fullModeSelected = false, bool recordingOnlyMode = false)
+    public SettingsForm(
+        AppSettings settings,
+        Action? applySettings = null,
+        bool fullModeSelected = false,
+        bool recordingOnlyMode = false,
+        string initialPage = "camera",
+        Func<Form>? createEventLog = null)
     {
         _settings = settings;
         _workingSettings = CloneSettings(settings);
         _applySettings = applySettings;
         _fullModeSelected = fullModeSelected;
         _recordingOnlyMode = recordingOnlyMode;
+        _createEventLog = createEventLog;
+        _selectedPage = string.IsNullOrWhiteSpace(initialPage) ? "camera" : initialPage;
         Text = Localization.T("Settings.Title");
         StartPosition = FormStartPosition.CenterParent;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
+        FormBorderStyle = FormBorderStyle.Sizable;
         MaximizeBox = false;
         MinimizeBox = false;
         Width = 1000;
         Height = 840;
+        MinimumSize = new Size(900, 720);
 
         Build();
         UiTheme.ApplyFormTheme(this);
@@ -91,16 +113,6 @@ public sealed class SettingsForm : KryptonForm
 
     private void Build()
     {
-        var panel = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            AutoScroll = true,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            Padding = new Padding(18, 16, 18, 36)
-        };
-        Controls.Add(panel);
-
         _cmbResolution.Items.AddRange(new object[] { "320x240", "640x480", "800x600", "1280x720", "1920x1080" });
         _cmbFps.Items.AddRange(new object[] { "60", "30", "15", "10", "5" });
         _cmbVideoBitrate.Items.AddRange(new object[]
@@ -118,39 +130,164 @@ public sealed class SettingsForm : KryptonForm
             "/Streaming/Channels/101",
             "/cam/realmonitor?channel=1&subtype=0"
         });
+        _cmbLanguage.Items.AddRange(new object[] { "한국어 (KOR)", "English (ENG)" });
 
-        panel.Controls.Add(Header(Localization.T("Settings.Camera")));
-        panel.Controls.Add(Row(_rdoIpCamera, _rdoUsbCamera));
+        _navigationPanel = new FlowLayoutPanel
+        {
+            AutoScroll = true,
+            BackColor = Color.FromArgb(247, 249, 252),
+            Dock = DockStyle.Left,
+            FlowDirection = FlowDirection.TopDown,
+            Padding = new Padding(10, 12, 10, 12),
+            Width = 180,
+            WrapContents = false
+        };
+        _navigationPanel.Controls.Add(new Label
+        {
+            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+            Height = 36,
+            Margin = new Padding(4, 0, 4, 8),
+            Text = Localization.T("Settings.Title"),
+            TextAlign = ContentAlignment.MiddleLeft,
+            Width = 150
+        });
+        _contentHost = new Panel
+        {
+            BackColor = Color.White,
+            Dock = DockStyle.Fill,
+            Padding = new Padding(12)
+        };
+        _bottomPanel = new Panel
+        {
+            BackColor = Color.FromArgb(247, 249, 252),
+            BorderStyle = BorderStyle.FixedSingle,
+            Dock = DockStyle.Bottom,
+            Height = 62,
+            Padding = new Padding(10, 7, 10, 7)
+        };
+        _bottomPanel.Controls.Add(Buttons());
+        Controls.Add(_contentHost);
+        Controls.Add(_navigationPanel);
+        Controls.Add(_bottomPanel);
+
+        FlowLayoutPanel cameraPage = CreatePage();
+        cameraPage.Controls.Add(Header(Localization.T("Settings.CameraType")));
+        cameraPage.Controls.Add(Row(_rdoIpCamera, _rdoUsbCamera));
+        var usbSection = CreateSection();
+        usbSection.Controls.Add(Header(Localization.T("Settings.UsbCamera")));
         _btnRefreshCamera.Click += async (_, _) => await RefreshCameraListAsync();
-        panel.Controls.Add(Row(Labeled("USB", _cmbCameraList, HalfFieldWidth), _btnRefreshCamera, Labeled(Localization.IsEnglish ? "Resolution" : "해상도", _cmbResolution, 240), Labeled("FPS", _cmbFps, 150)));
-        panel.Controls.Add(Header(Localization.T("Settings.IpCamera")));
-        panel.Controls.Add(Row(Labeled("IP", _txtIpAddress, HalfFieldWidth), Labeled("RTSP", _numRtspPort, QuarterFieldWidth), Labeled("HTTP", _numHttpPort, QuarterFieldWidth)));
+        usbSection.Controls.Add(Row(Labeled(Localization.T("Settings.UsbDevice"), _cmbCameraList, HalfFieldWidth), _btnRefreshCamera));
+        usbSection.Controls.Add(Row(Labeled(Localization.T("Settings.Resolution"), _cmbResolution, HalfFieldWidth), Labeled("FPS", _cmbFps, QuarterFieldWidth)));
+        _usbCameraSection = usbSection;
+        cameraPage.Controls.Add(usbSection);
+
+        var ipSection = CreateSection();
+        ipSection.Controls.Add(Header(Localization.T("Settings.IpCamera")));
+        ipSection.Controls.Add(Row(Labeled(Localization.T("Settings.IpAddress"), _txtIpAddress, HalfFieldWidth), Labeled(Localization.T("Settings.RtspPort"), _numRtspPort, QuarterFieldWidth), Labeled(Localization.T("Settings.HttpPort"), _numHttpPort, QuarterFieldWidth)));
         _btnFindOnvifCamera.Click += async (_, _) => await FindOnvifCameraAsync();
         _cmbOnvifCameras.SelectionChangeCommitted += (_, _) => ApplySelectedOnvifCamera();
-        panel.Controls.Add(Row(_btnFindOnvifCamera, _cmbOnvifCameras));
-        panel.Controls.Add(Row(Labeled(Localization.T("Settings.Path"), _cmbStreamPath, WideFieldWidth)));
+        ipSection.Controls.Add(Row(_btnFindOnvifCamera, _cmbOnvifCameras));
+        ipSection.Controls.Add(Row(Labeled(Localization.T("Settings.Path"), _cmbStreamPath, WideFieldWidth)));
         _btnOpenWebsite.Click += (_, _) => OpenCameraWebsite();
-        panel.Controls.Add(Row(_chkUseManualRtspUrl, _btnOpenWebsite));
-        panel.Controls.Add(Row(Labeled(Localization.T("Settings.ManualRtsp"), _txtManualRtspUrl, WideFieldWidth)));
-        panel.Controls.Add(Row(Labeled(Localization.T("Settings.RtspUrl"), _txtGeneratedRtspUrl, WideFieldWidth)));
-        var detectionHeader = Header(Localization.T("Settings.Detection"));
-        var detectionRow = Row(Labeled(Localization.T("Settings.RoiDiff"), _numRoiDiffThreshold, 200), Labeled(Localization.T("Settings.StopWait"), _numStopWaitSeconds, 220), Labeled(Localization.T("Settings.PreBuffer"), _numPreBufferSeconds, 220), Labeled(Localization.T("Settings.BufferMax"), _numPreBufferMaxMemory, 230));
-        panel.Controls.Add(detectionHeader);
-        panel.Controls.Add(detectionRow);
-        HideInRecordingOnlyMode(detectionHeader, detectionRow);
-        panel.Controls.Add(Header(Localization.T("Settings.Recording")));
-        panel.Controls.Add(Row(Labeled(Localization.T("Settings.FullInterval"), _numFullIntervalMinutes, 300), Labeled(Localization.T("Settings.Bitrate"), _cmbVideoBitrate, 300), _chkAutoStartFullRecording));
-        panel.Controls.Add(Header(Localization.T("Settings.Storage")));
-        panel.Controls.Add(Row(Labeled(Localization.T("Settings.DiskStop"), _numDiskStopThreshold, 210), Labeled(Localization.T("Settings.DiskResume"), _numDiskResumeThreshold, 210), Labeled(Localization.T("Settings.Retention"), _numRecRetentionDays, 230), Labeled(Localization.T("Settings.CleanupHour"), _numCleanupHour, 210)));
-        panel.Controls.Add(Row(_chkCleanupOnStartup, _chkStartInTray));
-        var overlayHeader = Header(Localization.T("Settings.Overlay"));
-        var overlayRow = Row(_chkShowRoi, _chkShowDebugText, _chkShowPlaybackRoiOutlines, _chkShowPlaybackDiffMessage, _chkShowPlaybackTrackingCandidate);
-        var playbackOptimizationRow = Row(Labeled(Localization.T("Settings.PlaybackOptimization"), _rdoPlaybackOptimizeBalanced, 220), _rdoPlaybackOptimizePlayback, _rdoPlaybackOptimizeTracking);
-        panel.Controls.Add(overlayHeader);
-        panel.Controls.Add(overlayRow);
-        panel.Controls.Add(playbackOptimizationRow);
-        HideInRecordingOnlyMode(overlayHeader, overlayRow, playbackOptimizationRow);
-        panel.Controls.Add(Buttons());
+        ipSection.Controls.Add(Row(_btnOpenWebsite));
+        ipSection.Controls.Add(Row(Labeled(Localization.T("Settings.RtspUrl"), _txtGeneratedRtspUrl, WideFieldWidth)));
+        _ipCameraSection = ipSection;
+        cameraPage.Controls.Add(ipSection);
+
+        FlowLayoutPanel recordingPage = CreatePage();
+        recordingPage.Controls.Add(Header(Localization.T("Settings.Recording")));
+        recordingPage.Controls.Add(Row(Labeled(Localization.T("Settings.FullInterval"), _numFullIntervalMinutes, HalfFieldWidth), Labeled(Localization.T("Settings.Bitrate"), _cmbVideoBitrate, HalfFieldWidth)));
+        recordingPage.Controls.Add(Row(_chkAutoStartFullRecording));
+
+        FlowLayoutPanel detectionPage = CreatePage();
+        detectionPage.Controls.Add(Header(Localization.T("Settings.Detection")));
+        detectionPage.Controls.Add(Row(Labeled(Localization.T("Settings.RoiDiff"), _numRoiDiffThreshold, HalfFieldWidth), Labeled(Localization.T("Settings.StopWait"), _numStopWaitSeconds, HalfFieldWidth)));
+        detectionPage.Controls.Add(Row(Labeled(Localization.T("Settings.PreBuffer"), _numPreBufferSeconds, HalfFieldWidth), Labeled(Localization.T("Settings.BufferMax"), _numPreBufferMaxMemory, HalfFieldWidth)));
+
+        FlowLayoutPanel storagePage = CreatePage();
+        storagePage.Controls.Add(Header(Localization.T("Settings.Storage")));
+        storagePage.Controls.Add(Row(Labeled(Localization.T("Settings.ActualRecordingPath"), _txtRecordingPath, WideFieldWidth)));
+        storagePage.Controls.Add(Row(Labeled(Localization.T("Settings.DiskStop"), _numDiskStopThreshold, HalfFieldWidth), Labeled(Localization.T("Settings.DiskResume"), _numDiskResumeThreshold, HalfFieldWidth)));
+        storagePage.Controls.Add(Row(Labeled(Localization.T("Settings.Retention"), _numRecRetentionDays, HalfFieldWidth), Labeled(Localization.T("Settings.CleanupHour"), _numCleanupHour, HalfFieldWidth)));
+
+        FlowLayoutPanel displayPage = CreatePage();
+        displayPage.Controls.Add(Header(Localization.T("Settings.DisplayPlayback")));
+        displayPage.Controls.Add(Row(_chkShowRoi, _chkShowDebugText));
+        displayPage.Controls.Add(Row(_chkShowPlaybackRoiOutlines, _chkShowPlaybackDiffMessage));
+        displayPage.Controls.Add(Row(_chkShowPlaybackTrackingCandidate));
+        displayPage.Controls.Add(Header(Localization.T("Settings.PlaybackOptimization")));
+        displayPage.Controls.Add(Row(_rdoPlaybackOptimizeBalanced, _rdoPlaybackOptimizePlayback, _rdoPlaybackOptimizeTracking));
+
+        FlowLayoutPanel generalPage = CreatePage();
+        generalPage.Controls.Add(Header(Localization.T("Settings.GeneralStartup")));
+        generalPage.Controls.Add(Row(Labeled(Localization.T("Menu.Language"), _cmbLanguage, HalfFieldWidth)));
+        generalPage.Controls.Add(Row(_chkCleanupOnStartup, _chkStartInTray));
+
+        FlowLayoutPanel advancedPage = CreatePage();
+        advancedPage.Controls.Add(Header(Localization.T("Settings.Advanced")));
+        advancedPage.Controls.Add(Row(Labeled(Localization.T("Settings.ReconnectDelay"), _numReconnectDelay, HalfFieldWidth), Labeled(Localization.T("Settings.NoFrameTimeout"), _numNoFrameTimeout, HalfFieldWidth)));
+        advancedPage.Controls.Add(Row(_chkUseManualRtspUrl));
+        advancedPage.Controls.Add(Row(Labeled(Localization.T("Settings.ManualRtsp"), _txtManualRtspUrl, WideFieldWidth)));
+
+        FlowLayoutPanel eventLogPage = CreatePage();
+        eventLogPage.Controls.Add(Header(Localization.T("Main.EventLog")));
+        eventLogPage.Controls.Add(new Label
+        {
+            AutoSize = true,
+            ForeColor = Color.FromArgb(67, 77, 98),
+            Margin = new Padding(0, 8, 0, 16),
+            MaximumSize = new Size(WideFieldWidth, 0),
+            Text = Localization.T("Settings.EventLogDescription")
+        });
+        if (_createEventLog is not null)
+        {
+            var openEventLog = Button(Localization.T("Settings.OpenEventLog"), (_, _) =>
+            {
+                using Form eventLog = _createEventLog();
+                eventLog.ShowDialog(this);
+            });
+            eventLogPage.Controls.Add(Row(openEventLog));
+        }
+
+        FlowLayoutPanel informationPage = CreatePage();
+        informationPage.Controls.Add(Header(Localization.T("Settings.Information")));
+        informationPage.Controls.Add(new Label
+        {
+            AutoSize = true,
+            Font = new Font("Segoe UI", 15F, FontStyle.Bold),
+            Margin = new Padding(0, 16, 0, 8),
+            Text = "DFBlackbox"
+        });
+        informationPage.Controls.Add(new Label
+        {
+            AutoSize = true,
+            Margin = new Padding(0, 4, 0, 18),
+            Text = $"{Localization.T("Settings.Version")}  {Application.ProductVersion}"
+        });
+        var openLogs = Button(Localization.T("Settings.OpenLogs"), (_, _) =>
+        {
+            string logs = Path.Combine(AppContext.BaseDirectory, "Logs");
+            Directory.CreateDirectory(logs);
+            Process.Start(new ProcessStartInfo { FileName = logs, UseShellExecute = true });
+        });
+        informationPage.Controls.Add(Row(openLogs));
+
+        AddSettingsPage(_navigationPanel, "camera", "Settings.Camera", cameraPage);
+        AddSettingsPage(_navigationPanel, "recording", "Settings.Recording", recordingPage);
+        if (!_recordingOnlyMode)
+        {
+            AddSettingsPage(_navigationPanel, "detection", "Settings.Detection", detectionPage);
+        }
+        AddSettingsPage(_navigationPanel, "storage", "Settings.Storage", storagePage);
+        if (!_recordingOnlyMode)
+        {
+            AddSettingsPage(_navigationPanel, "display", "Settings.DisplayPlayback", displayPage);
+        }
+        AddSettingsPage(_navigationPanel, "general", "Settings.GeneralStartup", generalPage);
+        AddSettingsPage(_navigationPanel, "advanced", "Settings.Advanced", advancedPage);
+        AddSettingsPage(_navigationPanel, "eventlog", "Main.EventLog", eventLogPage);
+        AddSettingsPage(_navigationPanel, "information", "Settings.Information", informationPage);
+        ShowSettingsPage(_pages.ContainsKey(_selectedPage) ? _selectedPage : "camera");
 
         foreach (var control in new Control[] { _txtIpAddress, _numRtspPort, _numHttpPort, _cmbStreamPath, _chkUseManualRtspUrl, _txtManualRtspUrl })
         {
@@ -166,6 +303,72 @@ public sealed class SettingsForm : KryptonForm
         };
         _rdoUsbCamera.CheckedChanged += (_, _) => UpdateCameraTypeUi();
         _rdoIpCamera.CheckedChanged += (_, _) => UpdateCameraTypeUi();
+    }
+
+    private static FlowLayoutPanel CreatePage() => new()
+    {
+        AutoScroll = true,
+        BackColor = Color.White,
+        Dock = DockStyle.Fill,
+        FlowDirection = FlowDirection.TopDown,
+        Padding = new Padding(18, 12, 18, 28),
+        Visible = false,
+        WrapContents = false
+    };
+
+    private static FlowLayoutPanel CreateSection() => new()
+    {
+        AutoSize = true,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        BackColor = Color.White,
+        FlowDirection = FlowDirection.TopDown,
+        Margin = Padding.Empty,
+        Width = FormContentWidth,
+        WrapContents = false
+    };
+
+    private void AddSettingsPage(FlowLayoutPanel navigationPanel, string pageKey, string titleKey, Control page)
+    {
+        var button = new KryptonButton
+        {
+            Height = 42,
+            Margin = new Padding(0, 2, 0, 2),
+            Text = Localization.T(titleKey),
+            Width = 150
+        };
+        button.Click += (_, _) => ShowSettingsPage(pageKey);
+        _navigationButtons[pageKey] = button;
+        _pages[pageKey] = page;
+        navigationPanel.Controls.Add(button);
+        _contentHost.Controls.Add(page);
+    }
+
+    private void ShowSettingsPage(string pageKey)
+    {
+        if (!_pages.ContainsKey(pageKey))
+        {
+            return;
+        }
+
+        _selectedPage = pageKey;
+        foreach ((string key, Control page) in _pages)
+        {
+            page.Visible = string.Equals(key, pageKey, StringComparison.OrdinalIgnoreCase);
+        }
+
+        foreach ((string key, KryptonButton button) in _navigationButtons)
+        {
+            if (string.Equals(key, pageKey, StringComparison.OrdinalIgnoreCase))
+            {
+                UiTheme.ApplyPrimaryKryptonButtonTheme(button);
+            }
+            else
+            {
+                UiTheme.ApplySecondaryKryptonButtonTheme(button);
+            }
+        }
+
+        _pages[pageKey].BringToFront();
     }
 
     private void HideInRecordingOnlyMode(params Control[] controls)
@@ -201,6 +404,10 @@ public sealed class SettingsForm : KryptonForm
         SelectBitrate(_workingSettings.Recording.VideoBitrateKbps);
         _chkAutoStartFullRecording.Checked = _workingSettings.Recording.AutoStartFullRecording;
         _chkAutoStartFullRecording.Enabled = _fullModeSelected;
+        _cmbLanguage.SelectedIndex = string.Equals(_workingSettings.Language, Localization.English, StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        _txtRecordingPath.Text = Path.Combine(AppContext.BaseDirectory, "REC");
+        _numReconnectDelay.Value = Math.Clamp(_workingSettings.Camera.ReconnectDelaySeconds, (int)_numReconnectDelay.Minimum, (int)_numReconnectDelay.Maximum);
+        _numNoFrameTimeout.Value = Math.Clamp(_workingSettings.Camera.NoFrameTimeoutSeconds, (int)_numNoFrameTimeout.Minimum, (int)_numNoFrameTimeout.Maximum);
         _numDiskStopThreshold.Value = Math.Clamp(_workingSettings.Storage.DiskStopThresholdPercent, (int)_numDiskStopThreshold.Minimum, (int)_numDiskStopThreshold.Maximum);
         _numDiskResumeThreshold.Value = Math.Clamp(_workingSettings.Storage.DiskResumeThresholdPercent, (int)_numDiskResumeThreshold.Minimum, (int)_numDiskResumeThreshold.Maximum);
         _numRecRetentionDays.Value = Math.Clamp(_workingSettings.Storage.RecRetentionDays, (int)_numRecRetentionDays.Minimum, (int)_numRecRetentionDays.Maximum);
@@ -270,6 +477,9 @@ public sealed class SettingsForm : KryptonForm
             ? bitrate.Kbps
             : 800;
         _workingSettings.Recording.AutoStartFullRecording = _chkAutoStartFullRecording.Checked;
+        _workingSettings.Language = _cmbLanguage.SelectedIndex == 1 ? Localization.English : Localization.Korean;
+        _workingSettings.Camera.ReconnectDelaySeconds = (int)_numReconnectDelay.Value;
+        _workingSettings.Camera.NoFrameTimeoutSeconds = (int)_numNoFrameTimeout.Value;
         _workingSettings.Storage.DiskStopThresholdPercent = (int)_numDiskStopThreshold.Value;
         _workingSettings.Storage.DiskResumeThresholdPercent = Math.Min((int)_numDiskResumeThreshold.Value, _workingSettings.Storage.DiskStopThresholdPercent);
         _workingSettings.Storage.RecRetentionDays = (int)_numRecRetentionDays.Value;
@@ -463,6 +673,16 @@ public sealed class SettingsForm : KryptonForm
     private void UpdateCameraTypeUi()
     {
         bool usb = _rdoUsbCamera.Checked;
+        if (_usbCameraSection is not null)
+        {
+            _usbCameraSection.Visible = usb;
+        }
+
+        if (_ipCameraSection is not null)
+        {
+            _ipCameraSection.Visible = !usb;
+        }
+
         _cmbCameraList.Enabled = usb;
         _btnRefreshCamera.Enabled = usb && !_cameraListRefreshInProgress;
         foreach (var control in new Control[] { _txtIpAddress, _numRtspPort, _numHttpPort, _cmbStreamPath, _chkUseManualRtspUrl, _txtGeneratedRtspUrl, _btnOpenWebsite })
@@ -479,6 +699,10 @@ public sealed class SettingsForm : KryptonForm
     private void ApplySettingsVisualTheme()
     {
         UiTheme.ApplyControlTree(this);
+        _navigationPanel.BackColor = Color.FromArgb(247, 249, 252);
+        _bottomPanel.BackColor = Color.FromArgb(247, 249, 252);
+        _contentHost.BackColor = Color.White;
+        ShowSettingsPage(_selectedPage);
     }
 
     private void SetOnvifComboMessage(string message, bool enabled)
@@ -504,9 +728,14 @@ public sealed class SettingsForm : KryptonForm
 
     private Control Buttons()
     {
+        var restoreDefaults = Button(Localization.T("Settings.RestoreDefaults"), (_, _) => RestoreDefaultsToForm());
         var ok = Button(Localization.T("Button.OK"), (_, _) =>
         {
-            ApplySettings();
+            if (!ApplySettings())
+            {
+                return;
+            }
+
             DialogResult = DialogResult.OK;
             Close();
         });
@@ -519,17 +748,46 @@ public sealed class SettingsForm : KryptonForm
         ok.Width = 128;
         apply.Width = 128;
         cancel.Width = 128;
-        var row = Row(ok, apply, cancel);
-        row.Height = 46;
-        row.Margin = new Padding(0, 8, 0, 12);
-        return row;
+        restoreDefaults.Width = 140;
+        restoreDefaults.Dock = DockStyle.Left;
+        var actions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right,
+            FlowDirection = FlowDirection.RightToLeft,
+            Width = 420,
+            WrapContents = false
+        };
+        actions.Controls.Add(ok);
+        actions.Controls.Add(apply);
+        actions.Controls.Add(cancel);
+        var panel = new Panel { Dock = DockStyle.Fill };
+        panel.Controls.Add(actions);
+        panel.Controls.Add(restoreDefaults);
+        return panel;
     }
 
-    private void ApplySettings()
+    private void RestoreDefaultsToForm()
     {
+        CopySettings(new AppSettings(), _workingSettings);
+        LoadSettings();
+        SetOnvifComboMessage(Localization.T("Settings.OnvifInitial"), enabled: true);
+        UpdateCameraTypeUi();
+        UpdateRtspPreview();
+    }
+
+    private bool ApplySettings()
+    {
+        if (_numDiskResumeThreshold.Value > _numDiskStopThreshold.Value)
+        {
+            ShowSettingsPage("storage");
+            MessageBox.Show(this, Localization.T("Msg.InvalidDiskThresholds"), Localization.T("Settings.Title"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
+
         SaveSettings();
         CopySettings(_workingSettings, _settings);
         _applySettings?.Invoke();
+        return true;
     }
 
     private static AppSettings CloneSettings(AppSettings settings)

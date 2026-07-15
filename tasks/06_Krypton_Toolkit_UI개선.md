@@ -143,3 +143,10 @@ Krypton Toolkit 도입 및 UI 외관 개선
 * 영상 표시 영역, 녹화, 감지, 파일 선택 재생, 드래그드롭 재생 로직은 변경하지 않았다.
 * `README.txt`와 `docs/DECISIONS.md`에 Krypton Toolkit 도입 및 UI 테마 방향을 기록했다.
 * `dotnet build DFBlackbox\DFBlackbox.csproj -o .buildcheck` 빌드가 경고 0개, 오류 0개로 성공했다.
+
+## 인수인계 상태
+
+* 구현과 빌드는 완료되었고 커밋 `d59ddc2`로 `main` 및 `origin/main`에 반영되었다.
+* 마지막 수정은 비활성 `새로고침` 버튼의 대비 보정과 입력 컨트롤 활성 외곽선의 중립색 처리다.
+* 다음 작업에서는 설정창을 실행해 위 두 항목과 오른쪽 입력 필드 잘림 여부를 먼저 시각 확인한다.
+* 시각 확인에서 문제가 없으면 기능 흐름을 변경하지 않고 이 작업을 최종 완료한다.
