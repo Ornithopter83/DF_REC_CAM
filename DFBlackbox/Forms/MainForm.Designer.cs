@@ -369,7 +369,8 @@ partial class MainForm
             lblCameraCardAddress,
             lblCameraCardStream,
             MakeActionRow(btnConnectCamera, btnDisconnectCamera),
-            MakeActionRow(btnOpenCamera, btnCloseCamera));
+            MakeActionRow(btnOpenCamera, btnCloseCamera),
+            MakeActionRow(btnCameraProperty));
         var recordingCard = MakeCard("Settings.Recording",
             MakeActionRow(rdoManualRecording, rdoAutoRecording, rdoFullRecording),
             lblRecordingCardState,
@@ -393,7 +394,7 @@ partial class MainForm
             numRtspPort, numHttpPort, cmbStreamPath, chkUseManualRtspUrl, txtManualRtspUrl,
             txtGeneratedRtspUrl, btnRefreshCamera, btnApplyCamera, btnDefaultSettings,
             btnCameraSettings, btnRecordingSettings, btnStorageSettings, btnOpenEventList,
-            btnWatchToggle, btnSaveHomeReference, btnCameraProperty,
+            btnWatchToggle, btnSaveHomeReference,
             chkShowPersonBox, chkShowMotionMask, chkShowRodRoi, chkShowHomeRoi,
             chkShowDebugText, chkShowRecordingStatus, chkShowFrameTime,
             numMotionThreshold, numMinMotionArea, numPersonThreshold, numRodThreshold,
@@ -433,11 +434,11 @@ partial class MainForm
 
         AutoScaleDimensions = new SizeF(7F, 15F);
         AutoScaleMode = AutoScaleMode.Font;
-        ClientSize = new Size(1440, 810);
+        ClientSize = new Size(1440, 860);
         KeyPreview = true;
         Location = new Point(10, 10);
         MainMenuStrip = menuStrip;
-        MinimumSize = new Size(1280, 730);
+        MinimumSize = new Size(1280, 780);
         Name = "MainForm";
         StartPosition = FormStartPosition.Manual;
         Text = "DFBlackbox";

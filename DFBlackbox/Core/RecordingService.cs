@@ -94,14 +94,35 @@ public sealed class RecordingService : IDisposable
             _activeFinalPath = Path.Combine(recordingFolder, $"{prefix}.mp4");
 
             var size = GetRecordingSize(firstFrame);
-            _writer = RecordingWriterFactory.Start(_activeRecordingPath, _recordingFps, size, GetRecordingBitrateKbps());
-            _writerSize = size;
-            foreach (var bufferedFrame in _preBuffer)
+            try
             {
-                WriteFrameForTimestampUnsafe(bufferedFrame.Frame, bufferedFrame.Timestamp);
-            }
+                _writer = RecordingWriterFactory.Start(_activeRecordingPath, _recordingFps, size, GetRecordingBitrateKbps());
+                _writerSize = size;
+                foreach (var bufferedFrame in _preBuffer)
+                {
+                    WriteFrameForTimestampUnsafe(bufferedFrame.Frame, bufferedFrame.Timestamp);
+                }
 
-            ClearPreBufferUnsafe();
+                // 전체 녹화는 사전 버퍼가 없으므로 writer를 연 직후 전달받은 최신 프레임을 반드시 기록한다.
+                // 첫 프레임이 없으면 FFmpeg가 스트림을 만들지 못하고 빈 출력으로 종료될 수 있다.
+                if (firstFrame is not null && !firstFrame.Empty())
+                {
+                    WriteFrameForTimestampUnsafe(firstFrame, startTime);
+                }
+
+                ClearPreBufferUnsafe();
+            }
+            catch
+            {
+                _writer?.Dispose();
+                _writer = null;
+                _writerSize = default;
+                _nextFrameDue = DateTime.MinValue;
+                _lastWrittenFrame?.Dispose();
+                _lastWrittenFrame = null;
+                ClearPreBufferUnsafe();
+                throw;
+            }
         }
     }
 
@@ -127,21 +148,46 @@ public sealed class RecordingService : IDisposable
                 return "";
             }
 
-            _writer.Close();
-            _writer = null;
-            _writerSize = default;
-            _nextFrameDue = DateTime.MinValue;
-            _lastWrittenFrame?.Dispose();
-            _lastWrittenFrame = null;
-
-            if (File.Exists(_activeFinalPath))
+            IRecordingWriter writer = _writer;
+            string recordingPath = _activeRecordingPath;
+            string finalPath = _activeFinalPath;
+            Exception? closeError = null;
+            try
             {
-                File.Delete(_activeFinalPath);
+                writer.Close();
+            }
+            catch (Exception ex)
+            {
+                closeError = ex;
+            }
+            finally
+            {
+                writer.Dispose();
+                _writer = null;
+                _writerSize = default;
+                _nextFrameDue = DateTime.MinValue;
+                _lastWrittenFrame?.Dispose();
+                _lastWrittenFrame = null;
+                ClearPreBufferUnsafe();
             }
 
-            File.Move(_activeRecordingPath, _activeFinalPath);
-            ClearPreBufferUnsafe();
-            return _activeFinalPath;
+            if (closeError is not null)
+            {
+                throw new InvalidOperationException($"녹화 파일 마무리에 실패했습니다. {closeError.Message}", closeError);
+            }
+
+            if (!File.Exists(recordingPath))
+            {
+                throw new InvalidOperationException($"임시 녹화 파일이 생성되지 않았습니다: {Path.GetFileName(recordingPath)}");
+            }
+
+            if (File.Exists(finalPath))
+            {
+                File.Delete(finalPath);
+            }
+
+            File.Move(recordingPath, finalPath);
+            return finalPath;
         }
     }
 

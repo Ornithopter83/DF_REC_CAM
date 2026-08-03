@@ -137,6 +137,7 @@ public static class Localization
         ["Status.RecordingFullInterval"] = "녹화: {0:0}분마다 전체 녹화",
         ["Status.RecordingDisk"] = "녹화: 디스크 {0:0.0}% 사용",
         ["Status.RecordingAutoWait"] = "녹화: 자동 시작 대기",
+        ["Status.RecordingCameraWarmup"] = "녹화: 카메라 안정화 대기 ({0}초)",
         ["Status.RecordingAutoNoUsb"] = "녹화: 자동 시작 실패, USB 카메라 없음",
         ["Status.RecordingAutoNoFrame"] = "녹화: 자동 시작 실패, 프레임 없음",
         ["Status.RecordingAutoFailed"] = "녹화: 자동 시작 실패 ({0})",
@@ -167,6 +168,7 @@ public static class Localization
         ["Msg.CouldNotOpenVideo"] = "선택한 영상 파일을 열 수 없습니다.",
         ["Msg.InvalidDiskThresholds"] = "녹화 재개 기준은 녹화 중지 기준보다 낮거나 같아야 합니다.",
         ["Msg.UsbPropertyOnly"] = "카메라 속성 조정은 USB 카메라에서 사용할 수 있습니다. IP 카메라 설정은 카메라 웹 페이지를 사용하세요.",
+        ["Msg.OpenCameraBeforeProperties"] = "카메라 속성을 확인하려면 USB 카메라를 먼저 열어주세요.",
         ["Tray.Open"] = "열기",
         ["Tray.Exit"] = "종료",
         ["FullScreen.Hint"] = "전체 화면을 종료하려면 F11키를 누르세요",
@@ -251,7 +253,15 @@ public static class Localization
         ["CameraProps.Contrast"] = "대비",
         ["CameraProps.Saturation"] = "채도",
         ["CameraProps.WhiteBalance"] = "화이트밸런스",
-        ["CameraProps.Focus"] = "초점"
+        ["CameraProps.Focus"] = "초점",
+        ["CameraProps.LiveHint"] = "지원되는 항목만 활성화됩니다. 변경은 즉시 반영되며 적용 시 확정, 취소 시 원래 값으로 복원됩니다.",
+        ["CameraProps.Property"] = "속성",
+        ["CameraProps.Value"] = "값",
+        ["CameraProps.Auto"] = "자동",
+        ["CameraProps.Support"] = "지원 여부",
+        ["CameraProps.Supported"] = "지원",
+        ["CameraProps.Unsupported"] = "미지원",
+        ["CameraProps.ApplyFailed"] = "적용 실패"
     };
 
     private static readonly Dictionary<string, string> EnglishTexts = new()
@@ -360,6 +370,7 @@ public static class Localization
         ["Status.RecordingFullInterval"] = "Recording: Full every {0:0} min",
         ["Status.RecordingDisk"] = "Recording: Disk {0:0.0}% used",
         ["Status.RecordingAutoWait"] = "Recording: Waiting for auto start",
+        ["Status.RecordingCameraWarmup"] = "Recording: Camera warm-up ({0} sec)",
         ["Status.RecordingAutoNoUsb"] = "Recording auto start failed: No USB camera",
         ["Status.RecordingAutoNoFrame"] = "Recording auto start failed: No frame",
         ["Status.RecordingAutoFailed"] = "Recording auto start failed ({0})",
@@ -390,6 +401,7 @@ public static class Localization
         ["Msg.CouldNotOpenVideo"] = "Could not open the selected video file.",
         ["Msg.InvalidDiskThresholds"] = "The recording resume threshold must be less than or equal to the stop threshold.",
         ["Msg.UsbPropertyOnly"] = "Camera property adjustment is available for USB cameras. Use the camera web page for IP camera settings.",
+        ["Msg.OpenCameraBeforeProperties"] = "Open the USB camera before viewing its properties.",
         ["Tray.Open"] = "Open",
         ["Tray.Exit"] = "Exit",
         ["FullScreen.Hint"] = "Press F11 to exit full screen.",
@@ -474,6 +486,14 @@ public static class Localization
         ["CameraProps.Contrast"] = "Contrast",
         ["CameraProps.Saturation"] = "Saturation",
         ["CameraProps.WhiteBalance"] = "White Balance",
-        ["CameraProps.Focus"] = "Focus"
+        ["CameraProps.Focus"] = "Focus",
+        ["CameraProps.LiveHint"] = "Only supported properties are enabled. Changes apply live; Apply confirms them and Cancel restores the original values.",
+        ["CameraProps.Property"] = "Property",
+        ["CameraProps.Value"] = "Value",
+        ["CameraProps.Auto"] = "Auto",
+        ["CameraProps.Support"] = "Support",
+        ["CameraProps.Supported"] = "Supported",
+        ["CameraProps.Unsupported"] = "Unsupported",
+        ["CameraProps.ApplyFailed"] = "Failed"
     };
 }

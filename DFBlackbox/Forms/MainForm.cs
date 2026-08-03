@@ -28,6 +28,7 @@ public sealed partial class MainForm : KryptonForm
     private DateTime _nextFullRecordingRotationAt = DateTime.MinValue;
     private Mat? _latestFrame;
     private readonly object _latestFrameSync = new();
+    private readonly object _fullRecordingRotationSync = new();
     private DateTime _currentRecordingStartedAt;
     private string _currentTriggerReason = "";
     private double _maxMotionScore;
@@ -54,6 +55,9 @@ public sealed partial class MainForm : KryptonForm
     private NotifyIcon? _trayIcon;
     private bool _startInTray;
     private bool _initialTrayHideDone;
+    private bool _trayTransitionInProgress;
+    private bool _trayHidePending;
+    private bool _isHiddenToTray;
     private bool _shutdownCompleted;
     private string _recordingStampText = "";
     private Color _recordingStampBackColor = Color.Empty;
@@ -65,6 +69,7 @@ public sealed partial class MainForm : KryptonForm
     private bool _autoStartFullRecordingScheduled;
     private bool _autoStartFullRecordingRunning;
     private System.Windows.Forms.Timer? _autoStartFullRecordingTimer;
+    private CancellationTokenSource? _autoStartFullRecordingCts;
     private bool _isPlaybackMode;
     private bool _playbackPlaying;
     private string _playbackPath = "";
@@ -110,6 +115,7 @@ public sealed partial class MainForm : KryptonForm
     private const double OverlayReferenceHeight = 1080.0;
     private const int PlaybackBufferCapacity = 10;
     private const int PlaybackStatusUpdateMilliseconds = 200;
+    private const int UsbCameraAutoRecordingWarmupSeconds = 10;
     private static readonly HashSet<string> SupportedVideoExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".mp4",
@@ -220,8 +226,7 @@ public sealed partial class MainForm : KryptonForm
             return;
         }
 
-        WindowState = FormWindowState.Minimized;
-        HideToTray();
+        ScheduleHideToTray();
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -242,6 +247,7 @@ public sealed partial class MainForm : KryptonForm
 
             _initialTrayHideDone = true;
             ScheduleAutoStartFullRecording();
+            _isHiddenToTray = true;
             base.SetVisibleCore(false);
             ShowInTaskbar = false;
             if (_trayIcon is not null)
@@ -325,8 +331,24 @@ public sealed partial class MainForm : KryptonForm
         };
         rdoUsbCamera.CheckedChanged += (_, _) => UpdateCameraTypeUi();
         rdoIpCamera.CheckedChanged += (_, _) => UpdateCameraTypeUi();
-        rdoManualRecording.CheckedChanged += (_, _) => SaveRecordingModeFromUi();
-        rdoAutoRecording.CheckedChanged += (_, _) => SaveRecordingModeFromUi();
+        rdoManualRecording.CheckedChanged += (_, _) =>
+        {
+            if (rdoManualRecording.Checked)
+            {
+                CancelAutoStartFullRecording();
+            }
+
+            SaveRecordingModeFromUi();
+        };
+        rdoAutoRecording.CheckedChanged += (_, _) =>
+        {
+            if (rdoAutoRecording.Checked)
+            {
+                CancelAutoStartFullRecording();
+            }
+
+            SaveRecordingModeFromUi();
+        };
         rdoFullRecording.CheckedChanged += (_, _) =>
         {
             if (rdoFullRecording.Checked)
@@ -338,7 +360,7 @@ public sealed partial class MainForm : KryptonForm
             else
             {
                 SaveRecordingModeFromUi();
-                _autoStartFullRecordingScheduled = false;
+                CancelAutoStartFullRecording();
             }
 
             UpdateControlStates();
@@ -348,7 +370,6 @@ public sealed partial class MainForm : KryptonForm
     private void InitializeApp()
     {
         ApplyApplicationIcon();
-        InitializeTrayIcon();
         _paths = new AppPaths(_settings.Storage);
         _paths.Ensure();
         string legacySettingsRoot = _paths.Root;
@@ -396,12 +417,13 @@ public sealed partial class MainForm : KryptonForm
 
     private void InitializeTrayIcon()
     {
+        bool shouldRemainVisible = _isHiddenToTray || (_trayIcon?.Visible ?? false);
         _trayIcon?.Dispose();
         _trayIcon = new NotifyIcon
         {
             Icon = Icon,
             Text = "DFBlackbox",
-            Visible = false,
+            Visible = shouldRemainVisible,
             ContextMenuStrip = new ContextMenuStrip()
         };
         _trayIcon.ContextMenuStrip.Items.Add(Localization.T("Tray.Open"), null, (_, _) => RestoreFromTray());
@@ -2462,16 +2484,20 @@ public sealed partial class MainForm : KryptonForm
     private void ScheduleAutoStartFullRecording()
     {
         if (_autoStartFullRecordingScheduled
+            || _autoStartFullRecordingRunning
             || !ShouldAutoStartFullRecording())
         {
             return;
         }
 
         _autoStartFullRecordingScheduled = true;
+        _autoStartFullRecordingCts?.Dispose();
+        var cancellation = new CancellationTokenSource();
+        _autoStartFullRecordingCts = cancellation;
         _logger?.Info("Full auto start scheduled.");
         if (IsHandleCreated && !IsDisposed)
         {
-            BeginInvoke(async () => await AutoStartFullRecordingAsync());
+            BeginInvoke(async () => await AutoStartFullRecordingAsync(cancellation));
             return;
         }
 
@@ -2482,16 +2508,45 @@ public sealed partial class MainForm : KryptonForm
             _autoStartFullRecordingTimer?.Stop();
             _autoStartFullRecordingTimer?.Dispose();
             _autoStartFullRecordingTimer = null;
-            await AutoStartFullRecordingAsync();
+            await AutoStartFullRecordingAsync(cancellation);
         };
         _autoStartFullRecordingTimer.Start();
     }
 
-    private async Task AutoStartFullRecordingAsync()
+    private void CancelAutoStartFullRecording(bool writeLog = true)
     {
+        bool wasPending = _autoStartFullRecordingScheduled || _autoStartFullRecordingRunning;
+        _autoStartFullRecordingTimer?.Stop();
+        _autoStartFullRecordingTimer?.Dispose();
+        _autoStartFullRecordingTimer = null;
+        _autoStartFullRecordingScheduled = false;
+
+        CancellationTokenSource? cancellation = _autoStartFullRecordingCts;
+        _autoStartFullRecordingCts = null;
+        if (cancellation is not null)
+        {
+            cancellation.Cancel();
+        }
+
+        if (writeLog && wasPending)
+        {
+            _logger?.Info("Full auto start canceled by recording mode change.");
+        }
+    }
+
+    private async Task AutoStartFullRecordingAsync(CancellationTokenSource cancellation)
+    {
+        CancellationToken token = cancellation.Token;
         if (_autoStartFullRecordingRunning
+            || token.IsCancellationRequested
             || !ShouldAutoStartFullRecording())
         {
+            if (ReferenceEquals(_autoStartFullRecordingCts, cancellation))
+            {
+                _autoStartFullRecordingCts = null;
+            }
+
+            cancellation.Dispose();
             return;
         }
 
@@ -2501,7 +2556,12 @@ public sealed partial class MainForm : KryptonForm
             _logger.Info("Full auto start running.");
             lblRecordingStatus.Text = Localization.T("Status.RecordingAutoWait");
             rdoFullRecording.Checked = true;
-            await Task.Delay(TimeSpan.FromSeconds(2));
+            await Task.Delay(TimeSpan.FromSeconds(2), token);
+            if (!ShouldAutoStartFullRecording())
+            {
+                return;
+            }
+
             ReadCameraSettingsFromUi();
             if (!_settings.Camera.IsIpCamera && !await EnsureUsbCameraSelectedAsync())
             {
@@ -2511,19 +2571,41 @@ public sealed partial class MainForm : KryptonForm
             }
 
             await OpenCameraPreviewAsync();
-            if (!await WaitForFirstCameraFrameAsync(TimeSpan.FromSeconds(20)))
+            token.ThrowIfCancellationRequested();
+            if (!ShouldAutoStartFullRecording())
+            {
+                return;
+            }
+
+            if (!await WaitForFirstCameraFrameAsync(TimeSpan.FromSeconds(20), token))
             {
                 lblRecordingStatus.Text = Localization.T("Status.RecordingAutoNoFrame");
                 _logger.Info("Full auto start skipped: no frame received after camera open.");
                 return;
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(1));
+            if (!_settings.Camera.IsIpCamera)
+            {
+                lblRecordingStatus.Text = Localization.T("Status.RecordingCameraWarmup", UsbCameraAutoRecordingWarmupSeconds);
+                _logger.Info($"USB camera warm-up started ({UsbCameraAutoRecordingWarmupSeconds}s).");
+                await Task.Delay(TimeSpan.FromSeconds(UsbCameraAutoRecordingWarmupSeconds), token);
+            }
+
+            token.ThrowIfCancellationRequested();
+            if (!ShouldAutoStartFullRecording())
+            {
+                return;
+            }
+
             await StartFullRecordingAsync();
             if (_startInTray && _recordingService.IsRecording)
             {
                 HideToTray();
             }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            _logger.Info("Full auto start canceled.");
         }
         catch (Exception ex)
         {
@@ -2533,7 +2615,17 @@ public sealed partial class MainForm : KryptonForm
         finally
         {
             _autoStartFullRecordingRunning = false;
+            if (ReferenceEquals(_autoStartFullRecordingCts, cancellation))
+            {
+                _autoStartFullRecordingCts = null;
+            }
+
+            cancellation.Dispose();
             UpdateControlStates();
+            if (token.IsCancellationRequested && ShouldAutoStartFullRecording())
+            {
+                ScheduleAutoStartFullRecording();
+            }
         }
     }
 
@@ -2542,11 +2634,12 @@ public sealed partial class MainForm : KryptonForm
         return string.Equals(_settings.Recording.Mode, "Full", StringComparison.OrdinalIgnoreCase);
     }
 
-    private async Task<bool> WaitForFirstCameraFrameAsync(TimeSpan timeout)
+    private async Task<bool> WaitForFirstCameraFrameAsync(TimeSpan timeout, CancellationToken token)
     {
         DateTime until = DateTime.Now + timeout;
         while (DateTime.Now < until)
         {
+            token.ThrowIfCancellationRequested();
             if (IsDisposed)
             {
                 return false;
@@ -2557,7 +2650,7 @@ public sealed partial class MainForm : KryptonForm
                 return true;
             }
 
-            await Task.Delay(200);
+            await Task.Delay(200, token);
         }
 
         return false;
@@ -2970,35 +3063,50 @@ public sealed partial class MainForm : KryptonForm
 
     private void RotateFullRecordingIfDue(DateTime now, Mat? frame)
     {
-        if (_recordingService.IsRecording && now < _nextFullRecordingRotationAt)
+        lock (_fullRecordingRotationSync)
         {
-            return;
-        }
+            if (_recordingService.IsRecording && now < _nextFullRecordingRotationAt)
+            {
+                return;
+            }
 
-        if (_recordingService.IsRecording)
-        {
-            string filePath = _recordingService.StopRecording(now);
-            ShowRecordingStamp(Localization.T("Stamp.RecordingStopped"), Color.FromArgb(192, 92, 24));
-            SaveEventLog(filePath, now);
-        }
+            if (_recordingService.IsRecording)
+            {
+                string filePath = _recordingService.StopRecording(now);
+                ShowRecordingStamp(Localization.T("Stamp.RecordingStopped"), Color.FromArgb(192, 92, 24));
+                SaveEventLog(filePath, now);
+            }
 
-        if (!CanStartRecordingOnDisk(now, "Full"))
-        {
-            _fullRecordingRequested = false;
-            _nextFullRecordingRotationAt = DateTime.MinValue;
-            BeginInvoke(UpdateControlStates);
-            return;
-        }
+            if (!CanStartRecordingOnDisk(now, "Full"))
+            {
+                _fullRecordingRequested = false;
+                _nextFullRecordingRotationAt = DateTime.MinValue;
+                BeginInvoke(UpdateControlStates);
+                return;
+            }
 
-        _recordingService.StartRecording(now, "Full", frame);
-        ShowRecordingStamp(Localization.T("Stamp.RecordingStarted"), Color.FromArgb(24, 132, 74));
-        _currentRecordingStartedAt = now;
-        _currentTriggerReason = "Full";
-        _maxMotionScore = 0;
-        _maxRodMotionScore = 0;
-        _minHomeDiffScore = double.MaxValue;
-        _nextFullRecordingRotationAt = now.Add(GetFullInterval());
-        BeginInvoke(UpdateControlStates);
+            // writer가 IsRecording=true로 노출되기 전에 다음 분할 시각을 먼저 확정한다.
+            // UI 시작 경로와 캡처 루프가 동시에 진입해도 lock 안에서 한 번만 시작한다.
+            _nextFullRecordingRotationAt = now.Add(GetFullInterval());
+            try
+            {
+                _recordingService.StartRecording(now, "Full", frame);
+                ShowRecordingStamp(Localization.T("Stamp.RecordingStarted"), Color.FromArgb(24, 132, 74));
+                _currentRecordingStartedAt = now;
+                _currentTriggerReason = "Full";
+                _maxMotionScore = 0;
+                _maxRodMotionScore = 0;
+                _minHomeDiffScore = double.MaxValue;
+                BeginInvoke(UpdateControlStates);
+            }
+            catch
+            {
+                _fullRecordingRequested = false;
+                _nextFullRecordingRotationAt = DateTime.MinValue;
+                BeginInvoke(UpdateControlStates);
+                throw;
+            }
+        }
     }
 
     private TimeSpan GetFullInterval()
@@ -3008,6 +3116,7 @@ public sealed partial class MainForm : KryptonForm
 
     private Task StartManualRecordingAsync()
     {
+        CancelAutoStartFullRecording();
         if (_recordingService.IsRecording || !IsCameraPreviewOpen())
         {
             return Task.CompletedTask;
@@ -3153,7 +3262,7 @@ public sealed partial class MainForm : KryptonForm
         bool cameraActionAvailable = !recording && !_cameraListRefreshInProgress;
 
         btnRefreshCamera.Enabled = usb && !_cameraListRefreshInProgress;
-        btnCameraProperty.Enabled = usb && cmbCameraList.SelectedItem is int;
+        btnCameraProperty.Enabled = usb && _cameraService.IsOpened;
         btnConnectCamera.Enabled = cameraActionAvailable && !_cameraService.IsOpened;
         btnDisconnectCamera.Enabled = !_isPlaybackMode && (_cameraService.IsOpened || previewOpen);
         btnOpenCamera.Enabled = cameraActionAvailable && !previewOpen;
@@ -3426,9 +3535,17 @@ public sealed partial class MainForm : KryptonForm
             return;
         }
 
-        using var form = new CameraSettingsForm(_cameraService, _settings.Camera.UsbCamera);
-        form.ShowDialog(this);
-        _settingsManager.Save(_settings);
+        if (!_cameraService.IsOpened)
+        {
+            MessageBox.Show(this, Localization.T("Msg.OpenCameraBeforeProperties"), "DFBlackbox", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var form = new CameraSettingsForm(_settings.Camera.UsbCamera);
+        if (form.ShowDialog(this) == DialogResult.OK)
+        {
+            _settingsManager.Save(_settings);
+        }
     }
 
     private void MainForm_KeyDown(object? sender, KeyEventArgs e)
@@ -3629,12 +3746,12 @@ public sealed partial class MainForm : KryptonForm
 
     private async Task ShutdownAsync()
     {
+        CancelAutoStartFullRecording(writeLog: false);
         await StopCaptureLoopAsync();
         StopRecordingIfActive(DateTime.Now);
         _settingsManager?.Save(_settings);
         await ExitPlaybackModeAsync(clearPreview: false);
         _cleanupTimer?.Dispose();
-        _autoStartFullRecordingTimer?.Dispose();
         _fullScreenHintTimer?.Dispose();
         _recordingService?.Dispose();
         _detectionService.Dispose();
@@ -3654,9 +3771,11 @@ public sealed partial class MainForm : KryptonForm
         PositionFullScreenHint();
         PositionPlaybackPanel();
         PositionVideoOverlays();
-        if (WindowState == FormWindowState.Minimized)
+        if (!_trayTransitionInProgress
+            && !_isHiddenToTray
+            && WindowState == FormWindowState.Minimized)
         {
-            HideToTray();
+            ScheduleHideToTray();
         }
     }
 
@@ -3676,26 +3795,89 @@ public sealed partial class MainForm : KryptonForm
         playbackControl.Width = Math.Max(1, availableWidth);
     }
 
+    private void ScheduleHideToTray()
+    {
+        if (_trayHidePending || _trayTransitionInProgress || _isHiddenToTray || IsDisposed)
+        {
+            return;
+        }
+
+        _trayHidePending = true;
+        BeginInvoke(() =>
+        {
+            _trayHidePending = false;
+            HideToTray();
+        });
+    }
+
     private void HideToTray()
     {
-        _initialTrayHideDone = true;
-        ShowInTaskbar = false;
-        Hide();
-        if (_trayIcon is not null)
+        if (_trayTransitionInProgress || _isHiddenToTray || IsDisposed)
         {
-            _trayIcon.Visible = true;
+            return;
+        }
+
+        _trayTransitionInProgress = true;
+        _initialTrayHideDone = true;
+        _isHiddenToTray = true;
+        try
+        {
+            if (_trayIcon is not null)
+            {
+                _trayIcon.Visible = true;
+            }
+
+            ShowInTaskbar = false;
+            Hide();
+        }
+        finally
+        {
+            _trayTransitionInProgress = false;
         }
     }
 
     private void RestoreFromTray()
     {
-        ShowInTaskbar = true;
-        Show();
-        WindowState = FormWindowState.Normal;
-        Activate();
-        if (_trayIcon is not null)
+        if (InvokeRequired)
         {
-            _trayIcon.Visible = false;
+            BeginInvoke(RestoreFromTray);
+            return;
+        }
+
+        if (_trayTransitionInProgress || IsDisposed)
+        {
+            return;
+        }
+
+        if (!_isHiddenToTray && Visible)
+        {
+            if (WindowState == FormWindowState.Minimized)
+            {
+                WindowState = FormWindowState.Normal;
+            }
+
+            Activate();
+            return;
+        }
+
+        _trayTransitionInProgress = true;
+        _trayHidePending = false;
+        try
+        {
+            ShowInTaskbar = true;
+            Show();
+            WindowState = FormWindowState.Normal;
+            BringToFront();
+            Activate();
+            _isHiddenToTray = false;
+            if (_trayIcon is not null)
+            {
+                _trayIcon.Visible = false;
+            }
+        }
+        finally
+        {
+            _trayTransitionInProgress = false;
         }
     }
 
