@@ -22,6 +22,7 @@ public sealed partial class MainForm : KryptonForm
     private CancellationTokenSource? _captureCts;
     private Task? _captureTask;
     private readonly FpsCounter _fpsCounter = new();
+    private readonly FpsCounter _captureFpsCounter = new();
     private int _previewUpdatePending;
     private bool _manualRecordingRequested;
     private bool _fullRecordingRequested;
@@ -41,6 +42,8 @@ public sealed partial class MainForm : KryptonForm
     private long _cachedDiskFreeBytes;
     private long _cachedDiskTotalBytes;
     private DateTime _lastDashboardUpdateAt = DateTime.MinValue;
+    private DateTime _lastRecordingPreviewAt = DateTime.MinValue;
+    private DateTime _lastRecordingSnapshotAt = DateTime.MinValue;
     private int _consecutiveFrameFailures;
     private readonly FpsCounter _algorithmFpsCounter = new();
     private double _lastAlgorithmMs;
@@ -116,6 +119,9 @@ public sealed partial class MainForm : KryptonForm
     private const int PlaybackBufferCapacity = 10;
     private const int PlaybackStatusUpdateMilliseconds = 200;
     private const int UsbCameraAutoRecordingWarmupSeconds = 10;
+    private const int RecordingPreviewIntervalMilliseconds = 200;
+    private const int RecordingPreviewMaxWidth = 640;
+    private const int RecordingPreviewMaxHeight = 360;
     private static readonly HashSet<string> SupportedVideoExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".mp4",
@@ -886,6 +892,9 @@ public sealed partial class MainForm : KryptonForm
         }
 
         _captureCts = new CancellationTokenSource();
+        _captureFpsCounter.Reset();
+        _lastRecordingPreviewAt = DateTime.MinValue;
+        _lastRecordingSnapshotAt = DateTime.MinValue;
         _captureTask = Task.Run(() => CaptureLoopAsync(_captureCts.Token));
         lblCameraStatus.Text = $"{GetCameraStatusText()} / open";
         UpdateControlStates();
@@ -1910,10 +1919,22 @@ public sealed partial class MainForm : KryptonForm
 
                 _lastFrameAt = DateTime.Now;
                 _consecutiveFrameFailures = 0;
+                _captureFpsCounter.Tick();
                 using (frame)
                 {
-                    SetLatestFrame(frame);
                     DateTime now = DateTime.Now;
+                    bool recordingAtFrameStart = _recordingService.IsRecording;
+                    if (recordingAtFrameStart)
+                    {
+                        _recordingService.WriteFrame(frame, now);
+                    }
+
+                    if (!recordingAtFrameStart
+                        || now - _lastRecordingSnapshotAt >= TimeSpan.FromMilliseconds(RecordingPreviewIntervalMilliseconds))
+                    {
+                        SetLatestFrame(frame);
+                        _lastRecordingSnapshotAt = now;
+                    }
                     _stateMachine.AutoRecordingEnabled = _isWatching && rdoAutoRecording.Checked;
                     bool algorithmEnabled = _isWatching && ShouldRunAlgorithm();
                     var result = algorithmEnabled
@@ -1956,7 +1977,11 @@ public sealed partial class MainForm : KryptonForm
 
                     if (_recordingService.IsRecording)
                     {
-                        _recordingService.WriteFrame(frame, now);
+                        if (!recordingAtFrameStart)
+                        {
+                            _recordingService.WriteFrame(frame, now);
+                        }
+
                         _maxMotionScore = Math.Max(_maxMotionScore, result.PersonMotionScore);
                         _maxRodMotionScore = Math.Max(_maxRodMotionScore, result.RodMotionScore);
                         _minHomeDiffScore = Math.Min(_minHomeDiffScore, result.HomeDiffScore);
@@ -1971,8 +1996,15 @@ public sealed partial class MainForm : KryptonForm
                         BeginInvoke(UpdateControlStates);
                     }
 
-                    using var preview = ShouldDrawOverlay() ? DrawOverlay(frame, result, stateResult) : frame.Clone();
-                    UpdatePreview(preview, result);
+                    if (ShouldUpdateLivePreview(now))
+                    {
+                        using Mat preview = _recordingService.IsRecording
+                            ? CreateRecordingPreviewCanvas(frame)
+                            : ShouldDrawOverlay()
+                                ? DrawOverlay(frame, result, stateResult)
+                                : frame.Clone();
+                        UpdatePreview(preview, result);
+                    }
                 }
 
                 await Task.Yield();
@@ -2167,7 +2199,6 @@ public sealed partial class MainForm : KryptonForm
     private bool ShouldRunAlgorithm()
     {
         return rdoAutoRecording.Checked
-            || _recordingService.IsRecording
             || _settings.Overlay.ShowDebugText;
     }
 
@@ -2176,6 +2207,41 @@ public sealed partial class MainForm : KryptonForm
         return _settings.Overlay.ShowRodRoi
             || _settings.Overlay.ShowDebugText
             || _recordingService.IsRecording;
+    }
+
+    private bool ShouldUpdateLivePreview(DateTime now)
+    {
+        if (!_recordingService.IsRecording)
+        {
+            return true;
+        }
+
+        if (now - _lastRecordingPreviewAt < TimeSpan.FromMilliseconds(RecordingPreviewIntervalMilliseconds))
+        {
+            return false;
+        }
+
+        _lastRecordingPreviewAt = now;
+        return true;
+    }
+
+    private static Mat CreateRecordingPreviewCanvas(Mat frame)
+    {
+        double scale = Math.Min(
+            1.0,
+            Math.Min(
+                RecordingPreviewMaxWidth / (double)Math.Max(1, frame.Width),
+                RecordingPreviewMaxHeight / (double)Math.Max(1, frame.Height)));
+        if (scale >= 1.0)
+        {
+            return frame.Clone();
+        }
+
+        int width = Math.Max(2, (int)Math.Round(frame.Width * scale));
+        int height = Math.Max(2, (int)Math.Round(frame.Height * scale));
+        var output = new Mat();
+        Cv2.Resize(frame, output, new OpenCvSharp.Size(width, height), 0, 0, InterpolationFlags.Area);
+        return output;
     }
 
     private void UpdatePreview(Mat preview, DetectionResult result)
@@ -2188,6 +2254,10 @@ public sealed partial class MainForm : KryptonForm
         _fpsCounter.Tick();
         Bitmap bitmap;
         if (_isPlaybackMode && !ShouldDrawPlaybackOverlay())
+        {
+            bitmap = BitmapConverter.ToBitmap(preview);
+        }
+        else if (!_isPlaybackMode && _recordingService.IsRecording)
         {
             bitmap = BitmapConverter.ToBitmap(preview);
         }
@@ -2232,7 +2302,8 @@ public sealed partial class MainForm : KryptonForm
         Image? old = picCameraPreview.Image;
         picCameraPreview.Image = bitmap;
         old?.Dispose();
-        lblFps.Text = Localization.T("Status.Fps", _fpsCounter.CurrentFps);
+        double displayedFps = _isPlaybackMode ? _fpsCounter.CurrentFps : _captureFpsCounter.CurrentFps;
+        lblFps.Text = Localization.T("Status.Fps", displayedFps);
         if (_isPlaybackMode)
         {
             lblCameraStatus.Text = _playbackPlaying ? Localization.T("Status.PlaybackPlaying") : Localization.T("Status.PlaybackPaused");
@@ -3304,7 +3375,8 @@ public sealed partial class MainForm : KryptonForm
         }
 
         DateTime now = DateTime.Now;
-        if (!force && now - _lastDashboardUpdateAt < TimeSpan.FromMilliseconds(250))
+        int dashboardIntervalMilliseconds = _recordingService.IsRecording ? 1000 : 250;
+        if (!force && now - _lastDashboardUpdateAt < TimeSpan.FromMilliseconds(dashboardIntervalMilliseconds))
         {
             return;
         }
@@ -3332,7 +3404,7 @@ public sealed partial class MainForm : KryptonForm
         lblCameraCardState.ForeColor = cameraConnected ? UiTheme.Success : UiTheme.MutedText;
         lblCameraCardAddress.Text = $"{Localization.T("Dashboard.CameraAddress")}  {cameraAddress}";
         lblCameraCardStream.Text = previewOpen
-            ? $"{Localization.T("Dashboard.StreamState")}  {Localization.T("Dashboard.StreamActive", _fpsCounter.CurrentFps, _settings.Camera.ActiveWidth, _settings.Camera.ActiveHeight)}"
+            ? $"{Localization.T("Dashboard.StreamState")}  {Localization.T("Dashboard.StreamActive", _captureFpsCounter.CurrentFps, _settings.Camera.ActiveWidth, _settings.Camera.ActiveHeight)}"
             : $"{Localization.T("Dashboard.StreamState")}  {Localization.T("Dashboard.StreamStopped")}";
 
         TimeSpan elapsed = recording && _currentRecordingStartedAt != default
@@ -3342,7 +3414,9 @@ public sealed partial class MainForm : KryptonForm
         string recordingState = recording ? Localization.T("Dashboard.Recording") : Localization.T("Dashboard.RecordingOff");
         lblHeaderRecording.Text = recording ? $"● REC {elapsedText}" : $"● {recordingState}";
         lblHeaderRecording.ForeColor = recording ? UiTheme.Danger : Color.White;
-        lblRecordingCardState.Text = $"{Localization.T("Dashboard.State")}       {recordingState}";
+        lblRecordingCardState.Text = recording
+            ? $"{Localization.T("Dashboard.State")}       {recordingState} ({_recordingService.CurrentWriterFps:0.0} FPS)"
+            : $"{Localization.T("Dashboard.State")}       {recordingState}";
         lblRecordingCardState.ForeColor = recording ? UiTheme.Danger : UiTheme.MutedText;
         string activePath = recording ? _recordingService.ActiveRecordingPath : "";
         string activeFile = string.IsNullOrWhiteSpace(activePath) ? "-" : Path.GetFileName(activePath).Replace(".recording.mp4", ".mp4", StringComparison.OrdinalIgnoreCase);
@@ -3384,7 +3458,7 @@ public sealed partial class MainForm : KryptonForm
         storageUsageBar.Value = Math.Clamp((int)Math.Round(_cachedDiskUsedPercent), storageUsageBar.Minimum, storageUsageBar.Maximum);
 
         lblVideoCamera.Text = cameraName;
-        lblVideoInfo.Text = $"FPS: {_fpsCounter.CurrentFps:0}";
+        lblVideoInfo.Text = $"FPS: {(_isPlaybackMode ? _fpsCounter.CurrentFps : _captureFpsCounter.CurrentFps):0}";
         lblVideoRecording.Text = $"● REC {elapsedText}";
         lblVideoRecording.Visible = recording && !_fullScreenMode;
         lblVersion.Text = $"v{GetDisplayVersion()}";

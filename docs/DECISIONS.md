@@ -39,3 +39,4 @@ YYYY-MM-DD
 - USB 카메라 자동 전체 녹화는 첫 프레임 수신 후 10초 워밍업을 거쳐 시작하며, 시작 프레임을 실제 녹화 writer에 즉시 기록한다.
 - USB 카메라 속성 지원 여부와 자동·수동 범위는 DirectShow `IAMCameraControl`/`IAMVideoProcAmp` capability 조회 결과를 기준으로 하며, 취소 시 장치의 최초 값을 복원한다.
 - 수동 녹화 모드를 선택하면 대기 중인 자동 전체녹화 타이머와 비동기 워밍업을 즉시 취소하고, 녹화 시작 직전에 현재 모드를 다시 확인한다.
+- 녹화 중에는 writer 큐를 최우선으로 사용하고 프리뷰를 5 FPS·최대 640x360으로 제한하며, FFmpeg 입력은 프레임별 BMP 대신 `bgr24 rawvideo`를 사용한다.

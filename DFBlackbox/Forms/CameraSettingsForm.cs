@@ -13,6 +13,7 @@ public sealed class CameraSettingsForm : KryptonForm
     private readonly List<PropertyEditor> _editors = new();
     private bool _initializing = true;
     private bool _synchronizingValue;
+    private bool _defaultsStaged;
     private bool _accepted;
     private bool _restored;
 
@@ -105,10 +106,19 @@ public sealed class CameraSettingsForm : KryptonForm
         };
         var apply = new KryptonButton { Text = Localization.T("Button.Apply"), Width = 100, Height = 36 };
         var cancel = new KryptonButton { Text = Localization.T("Button.Cancel"), Width = 100, Height = 36 };
+        var restoreDefaults = new KryptonButton
+        {
+            Enabled = _editors.Any(item => item.Capability.Supported),
+            Text = Localization.T("Settings.RestoreDefaults"),
+            Width = 120,
+            Height = 36
+        };
         apply.Click += (_, _) => ApplyAndClose();
         cancel.Click += (_, _) => CancelAndClose();
+        restoreDefaults.Click += (_, _) => StageDefaultValues();
         buttons.Controls.Add(apply);
         buttons.Controls.Add(cancel);
+        buttons.Controls.Add(restoreDefaults);
         root.Controls.Add(buttons, 0, 2);
         Controls.Add(root);
         AcceptButton = apply;
@@ -262,7 +272,7 @@ public sealed class CameraSettingsForm : KryptonForm
 
     private void ApplyLive(PropertyEditor editor)
     {
-        if (_initializing || !editor.Capability.Supported || _session is null)
+        if (_initializing || _defaultsStaged || !editor.Capability.Supported || _session is null)
         {
             return;
         }
@@ -275,6 +285,24 @@ public sealed class CameraSettingsForm : KryptonForm
 
     private void ApplyAndClose()
     {
+        bool appliedAll = true;
+        foreach (PropertyEditor editor in _editors.Where(item => item.Capability.Supported))
+        {
+            bool automatic = editor.Automatic.Enabled && editor.Automatic.Checked;
+            bool applied = _session?.TrySet(
+                editor.Definition.Property,
+                Decimal.ToInt32(editor.Value.Value),
+                automatic) == true;
+            editor.Support.Text = applied ? Localization.T("CameraProps.Supported") : Localization.T("CameraProps.ApplyFailed");
+            editor.Support.ForeColor = applied ? UiTheme.Success : UiTheme.Danger;
+            appliedAll &= applied;
+        }
+
+        if (!appliedAll)
+        {
+            return;
+        }
+
         foreach (PropertyEditor editor in _editors.Where(item => item.Capability.Supported))
         {
             editor.Definition.Setter(_settings, (double)editor.Value.Value);
@@ -283,6 +311,27 @@ public sealed class CameraSettingsForm : KryptonForm
         _accepted = true;
         DialogResult = DialogResult.OK;
         Close();
+    }
+
+    private void StageDefaultValues()
+    {
+        _defaultsStaged = true;
+        try
+        {
+            _synchronizingValue = true;
+            foreach (PropertyEditor editor in _editors.Where(item => item.Capability.Supported))
+            {
+                int defaultValue = SnapToStep(editor.Capability, editor.Capability.DefaultValue);
+                editor.Slider.Value = defaultValue;
+                editor.Value.Value = defaultValue;
+                editor.Support.Text = Localization.T("CameraProps.Supported");
+                editor.Support.ForeColor = UiTheme.Success;
+            }
+        }
+        finally
+        {
+            _synchronizingValue = false;
+        }
     }
 
     private void CancelAndClose()

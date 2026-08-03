@@ -1,8 +1,11 @@
 using DFBlackbox.Models;
 using DFBlackbox.Utils;
 using OpenCvSharp;
+using System.Buffers;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace DFBlackbox.Core;
@@ -44,6 +47,16 @@ public sealed class RecordingService : IDisposable
         }
     }
     public string ActiveRecordingPath => _activeRecordingPath;
+    public double CurrentWriterFps
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _writer?.CurrentFps ?? 0;
+            }
+        }
+    }
 
     public void AddToPreBuffer(Mat frame, DateTime timestamp)
     {
@@ -397,6 +410,7 @@ public sealed class RecordingService : IDisposable
 
     private interface IRecordingWriter : IDisposable
     {
+        double CurrentFps => 0;
         void Write(Mat frame);
         void Close();
     }
@@ -407,9 +421,144 @@ public sealed class RecordingService : IDisposable
         {
             string? ffmpegPath = FfmpegRecordingWriter.ResolveFfmpegPath();
             // FFmpeg가 있으면 지정 비트레이트를 정확히 적용하고, 없으면 OpenCV 기본 writer로 녹화만 유지한다.
-            return ffmpegPath is not null
-                ? FfmpegRecordingWriter.Start(ffmpegPath, outputPath, fps, bitrateKbps)
+            IRecordingWriter writer = ffmpegPath is not null
+                ? FfmpegRecordingWriter.Start(ffmpegPath, outputPath, fps, size, bitrateKbps)
                 : OpenCvRecordingWriter.Start(outputPath, fps, size);
+            return new QueuedRecordingWriter(writer, fps);
+        }
+    }
+
+    private sealed class QueuedRecordingWriter : IRecordingWriter
+    {
+        private readonly IRecordingWriter _inner;
+        private readonly BlockingCollection<Mat> _frames;
+        private readonly Task _worker;
+        private readonly FpsCounter _fpsCounter = new();
+        private Exception? _workerError;
+        private bool _closed;
+
+        public QueuedRecordingWriter(IRecordingWriter inner, int fps)
+        {
+            _inner = inner;
+            _frames = new BlockingCollection<Mat>(Math.Clamp(fps / 2, 4, 15));
+            _worker = Task.Run(WriteLoop);
+        }
+
+        public double CurrentFps => _fpsCounter.CurrentFps;
+
+        public void Write(Mat frame)
+        {
+            if (_closed)
+            {
+                return;
+            }
+
+            ThrowIfWorkerFailed();
+            Mat queuedFrame = frame.Clone();
+            try
+            {
+                _frames.Add(queuedFrame);
+            }
+            catch
+            {
+                queuedFrame.Dispose();
+                ThrowIfWorkerFailed();
+                throw;
+            }
+        }
+
+        public void Close()
+        {
+            if (_closed)
+            {
+                return;
+            }
+
+            _closed = true;
+            _frames.CompleteAdding();
+            Exception? closeError = null;
+            try
+            {
+                _worker.GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                closeError = ex;
+            }
+
+            try
+            {
+                _inner.Close();
+            }
+            catch (Exception ex)
+            {
+                closeError ??= ex;
+            }
+
+            if (_workerError is not null)
+            {
+                throw new InvalidOperationException($"녹화 writer 작업에 실패했습니다. {_workerError.Message}", _workerError);
+            }
+
+            if (closeError is not null)
+            {
+                throw closeError;
+            }
+        }
+
+        public void Dispose()
+        {
+            try
+            {
+                Close();
+            }
+            catch
+            {
+            }
+            finally
+            {
+                while (_frames.TryTake(out Mat? frame))
+                {
+                    frame.Dispose();
+                }
+
+                _frames.Dispose();
+                _inner.Dispose();
+            }
+        }
+
+        private void WriteLoop()
+        {
+            try
+            {
+                foreach (Mat frame in _frames.GetConsumingEnumerable())
+                {
+                    using (frame)
+                    {
+                        _inner.Write(frame);
+                        _fpsCounter.Tick();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _workerError = ex;
+                _frames.CompleteAdding();
+                while (_frames.TryTake(out Mat? frame))
+                {
+                    frame.Dispose();
+                }
+
+                throw;
+            }
+        }
+
+        private void ThrowIfWorkerFailed()
+        {
+            if (_workerError is not null)
+            {
+                throw new InvalidOperationException($"녹화 writer 작업에 실패했습니다. {_workerError.Message}", _workerError);
+            }
         }
     }
 
@@ -483,7 +632,7 @@ public sealed class RecordingService : IDisposable
             _process.BeginErrorReadLine();
         }
 
-        public static FfmpegRecordingWriter Start(string ffmpegPath, string outputPath, int fps, int bitrateKbps)
+        public static FfmpegRecordingWriter Start(string ffmpegPath, string outputPath, int fps, OpenCvSharp.Size size, int bitrateKbps)
         {
             var process = new Process
             {
@@ -495,12 +644,14 @@ public sealed class RecordingService : IDisposable
                         "-hide_banner",
                         "-loglevel error",
                         "-y",
-                        "-f image2pipe",
+                        "-f rawvideo",
+                        "-pixel_format bgr24",
+                        $"-video_size {size.Width}x{size.Height}",
                         $"-framerate {fps}",
-                        "-vcodec bmp",
                         "-i pipe:0",
                         "-an",
                         "-c:v libx264",
+                        "-preset veryfast",
                         "-pix_fmt yuv420p",
                         $"-b:v {bitrateKbps}k",
                         $"-maxrate {bitrateKbps}k",
@@ -534,13 +685,60 @@ public sealed class RecordingService : IDisposable
 
             try
             {
-                Cv2.ImEncode(".bmp", frame, out var bytes);
-                _process.StandardInput.BaseStream.Write(bytes, 0, bytes.Length);
-                _process.StandardInput.BaseStream.Flush();
+                WriteRawBgrFrame(frame, _process.StandardInput.BaseStream);
             }
             catch (Exception ex)
             {
                 throw new InvalidOperationException($"FFmpeg 녹화 프레임 쓰기에 실패했습니다. {ex.Message}", ex);
+            }
+        }
+
+        private static void WriteRawBgrFrame(Mat frame, Stream output)
+        {
+            Mat? converted = null;
+            Mat? contiguous = null;
+            try
+            {
+                Mat source = frame;
+                if (frame.Channels() == 4)
+                {
+                    converted = new Mat();
+                    Cv2.CvtColor(frame, converted, ColorConversionCodes.BGRA2BGR);
+                    source = converted;
+                }
+                else if (frame.Channels() == 1)
+                {
+                    converted = new Mat();
+                    Cv2.CvtColor(frame, converted, ColorConversionCodes.GRAY2BGR);
+                    source = converted;
+                }
+                else if (frame.Channels() != 3)
+                {
+                    throw new InvalidOperationException($"지원하지 않는 녹화 프레임 채널 수입니다: {frame.Channels()}");
+                }
+
+                if (!source.IsContinuous())
+                {
+                    contiguous = source.Clone();
+                    source = contiguous;
+                }
+
+                int byteCount = checked((int)(source.Total() * source.ElemSize()));
+                byte[] buffer = ArrayPool<byte>.Shared.Rent(byteCount);
+                try
+                {
+                    Marshal.Copy(source.Data, buffer, 0, byteCount);
+                    output.Write(buffer, 0, byteCount);
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(buffer);
+                }
+            }
+            finally
+            {
+                contiguous?.Dispose();
+                converted?.Dispose();
             }
         }
 
