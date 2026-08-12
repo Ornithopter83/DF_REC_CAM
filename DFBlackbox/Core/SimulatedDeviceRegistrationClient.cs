@@ -22,7 +22,7 @@ public sealed class SimulatedDeviceRegistrationClient : IDeviceRegistrationClien
             DateTimeOffset.UtcNow.AddMinutes(5));
         lock (_sync)
         {
-            _claims[claimId] = new DeviceClaimStatusResponse("pending", null, null, null, null);
+            _claims[claimId] = new DeviceClaimStatusResponse("pending", null, null, null, null, null);
         }
 
         return Task.FromResult(response);
@@ -66,5 +66,14 @@ public sealed class SimulatedDeviceRegistrationClient : IDeviceRegistrationClien
 
             _claims[claimId] = response;
         }
+    }
+
+    public Task RevokeDeviceAsync(
+        string deviceId,
+        string deviceToken,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
     }
 }

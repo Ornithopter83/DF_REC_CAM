@@ -20,6 +20,11 @@ public sealed class SettingsForm : KryptonForm
     private readonly bool _recordingOnlyMode;
     private readonly Func<Form>? _createEventLog;
     private readonly Func<DeviceRegistrationSettings, Form>? _createDeviceRegistration;
+    private readonly Func<string?>? _getDeviceRegistrationName;
+    private readonly Func<CancellationToken, Task>? _revokeDeviceRegistration;
+    private readonly Label _registrationStatus = new();
+    private readonly Button _registerDevice = new();
+    private readonly Button _revokeRegistration = new();
     private readonly KryptonRadioButton _rdoIpCamera = new() { Text = Localization.T("Main.IpCamera"), AutoSize = true };
     private readonly KryptonRadioButton _rdoUsbCamera = new() { Text = Localization.T("Main.UsbCamera"), AutoSize = true };
     private readonly KryptonComboBox _cmbCameraList = new() { DropDownStyle = ComboBoxStyle.DropDownList };
@@ -80,7 +85,9 @@ public sealed class SettingsForm : KryptonForm
         bool recordingOnlyMode = false,
         string initialPage = "camera",
         Func<Form>? createEventLog = null,
-        Func<DeviceRegistrationSettings, Form>? createDeviceRegistration = null)
+        Func<DeviceRegistrationSettings, Form>? createDeviceRegistration = null,
+        Func<string?>? getDeviceRegistrationName = null,
+        Func<CancellationToken, Task>? revokeDeviceRegistration = null)
     {
         _settings = settings;
         _workingSettings = CloneSettings(settings);
@@ -89,6 +96,8 @@ public sealed class SettingsForm : KryptonForm
         _recordingOnlyMode = recordingOnlyMode;
         _createEventLog = createEventLog;
         _createDeviceRegistration = createDeviceRegistration;
+        _getDeviceRegistrationName = getDeviceRegistrationName;
+        _revokeDeviceRegistration = revokeDeviceRegistration;
         _selectedPage = string.IsNullOrWhiteSpace(initialPage) ? "camera" : initialPage;
         Text = Localization.T("Settings.Title");
         StartPosition = FormStartPosition.CenterParent;
@@ -238,9 +247,21 @@ public sealed class SettingsForm : KryptonForm
         });
         if (_createDeviceRegistration is not null)
         {
-            Button registerDevice = Button(Localization.T("Registration.Start"), (_, _) => OpenDeviceRegistration());
-            registerDevice.Width = 160;
-            registrationPage.Controls.Add(Row(registerDevice));
+            _registrationStatus.AutoSize = true;
+            _registrationStatus.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+            _registrationStatus.Margin = new Padding(0, 4, 0, 12);
+            registrationPage.Controls.Add(_registrationStatus);
+
+            ConfigureRegistrationButton(
+                _registerDevice,
+                Localization.T("Registration.Start"),
+                async (_, _) => await OpenDeviceRegistrationAsync());
+            ConfigureRegistrationButton(
+                _revokeRegistration,
+                Localization.T("Registration.Revoke"),
+                async (_, _) => await RevokeDeviceRegistrationAsync());
+            registrationPage.Controls.Add(Row(_registerDevice, _revokeRegistration));
+            RefreshDeviceRegistrationUi();
         }
 
         FlowLayoutPanel advancedPage = CreatePage();
@@ -747,7 +768,7 @@ public sealed class SettingsForm : KryptonForm
         Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
     }
 
-    private void OpenDeviceRegistration()
+    private async Task OpenDeviceRegistrationAsync()
     {
         SaveSettings();
         string apiBaseUrl = _workingSettings.DeviceRegistration.ApiBaseUrl;
@@ -793,6 +814,74 @@ public sealed class SettingsForm : KryptonForm
         registration.ShowDialog(this);
         CopySettings(_settings, _workingSettings);
         LoadSettings();
+        RefreshDeviceRegistrationUi();
+        await Task.CompletedTask;
+    }
+
+    private async Task RevokeDeviceRegistrationAsync()
+    {
+        if (_revokeDeviceRegistration is null)
+        {
+            return;
+        }
+
+        DialogResult confirmation = MessageBox.Show(
+            this,
+            Localization.T("Registration.RevokeConfirm"),
+            Localization.T("Registration.Title"),
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button2);
+        if (confirmation != DialogResult.Yes)
+        {
+            return;
+        }
+
+        _registerDevice.Enabled = false;
+        _revokeRegistration.Enabled = false;
+        _registrationStatus.Text = Localization.T("Registration.Revoking");
+        try
+        {
+            await _revokeDeviceRegistration(CancellationToken.None);
+            CopySettings(_settings, _workingSettings);
+            LoadSettings();
+            RefreshDeviceRegistrationUi();
+            MessageBox.Show(
+                this,
+                Localization.T("Registration.Revoked"),
+                Localization.T("Registration.Title"),
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            RefreshDeviceRegistrationUi();
+            MessageBox.Show(
+                this,
+                Localization.T("Registration.RevokeFailed", ex.Message),
+                Localization.T("Registration.Title"),
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+    }
+
+    private void RefreshDeviceRegistrationUi()
+    {
+        string? registrationName = _getDeviceRegistrationName?.Invoke();
+        bool isRegistered = !string.IsNullOrWhiteSpace(registrationName);
+        _registrationStatus.Text = isRegistered
+            ? Localization.T("Registration.RegisteredAs", registrationName!)
+            : Localization.T("Registration.NotRegistered");
+        _registerDevice.Enabled = !isRegistered;
+        _revokeRegistration.Enabled = isRegistered && _revokeDeviceRegistration is not null;
+    }
+
+    private static void ConfigureRegistrationButton(Button button, string text, EventHandler click)
+    {
+        button.Text = text;
+        button.Width = 160;
+        button.Height = 32;
+        button.Click += click;
     }
 
     private Control Buttons()

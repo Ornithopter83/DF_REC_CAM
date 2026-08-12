@@ -5,7 +5,9 @@ namespace DFBlackbox.Core;
 
 public sealed class StorageCleanupService
 {
-    public StorageCleanupResult Cleanup(StorageSettings settings)
+    public StorageCleanupResult Cleanup(
+        StorageSettings settings,
+        DeviceRegistrationSettings? registration = null)
     {
         var paths = new AppPaths(settings);
         paths.Ensure();
@@ -18,6 +20,9 @@ public sealed class StorageCleanupService
             TimeSpan.FromDays(settings.RecRetentionDays),
             includeLocked: false,
             result,
+            registration is null || string.IsNullOrWhiteSpace(registration.DeviceId)
+                ? null
+                : filePath => IsNasCopyReady(paths.RecVideos, filePath, registration),
             paths.TempVideos,
             paths.EventVideos,
             paths.ManualVideos);
@@ -33,6 +38,7 @@ public sealed class StorageCleanupService
         TimeSpan maxAge,
         bool includeLocked,
         StorageCleanupResult result,
+        Func<string, bool>? canDelete = null,
         params string[] excludedFolders)
     {
         if (!Directory.Exists(folder))
@@ -53,10 +59,46 @@ public sealed class StorageCleanupService
                 continue;
             }
 
+            if (canDelete is not null && !canDelete(file))
+            {
+                continue;
+            }
+
             if (File.GetLastWriteTime(file) < cutoff)
             {
                 TryDelete(file, result);
             }
+        }
+    }
+
+    private static bool IsNasCopyReady(
+        string localRecordingRoot,
+        string sourcePath,
+        DeviceRegistrationSettings registration)
+    {
+        if (!NasRecordingPathMapper.TryGetTargetPath(
+                localRecordingRoot,
+                sourcePath,
+                registration,
+                out string? targetPath,
+                out _)
+            || targetPath is null
+            || !File.Exists(targetPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            return new FileInfo(sourcePath).Length == new FileInfo(targetPath).Length;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
         }
     }
 

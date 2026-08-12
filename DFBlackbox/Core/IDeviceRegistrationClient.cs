@@ -17,4 +17,9 @@ public interface IDeviceRegistrationClient
         string deviceToken,
         ProvisioningResultRequest request,
         CancellationToken cancellationToken);
+
+    Task RevokeDeviceAsync(
+        string deviceId,
+        string deviceToken,
+        CancellationToken cancellationToken);
 }

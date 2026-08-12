@@ -213,7 +213,7 @@ POST /devices/{device_id}/provisioning-result
 * 최초 장치 토큰은 `settings.json`과 로그에 남기지 않고 Windows DPAPI 현재 사용자 범위로 별도 암호화 파일에 최초 한 번만 저장한다.
 * 승인된 NAS 상대 경로가 설정 루트를 벗어나지 못하도록 검증하고, `live/recordings/events/temp`를 멱등 생성한 뒤 시험 파일 생성·삭제로 쓰기 권한을 확인한다.
 * NAS 준비 실패와 서버 결과 보고 실패를 기기 승인과 분리해 표시하며, 저장된 장치 정보와 토큰으로 NAS 준비 및 결과 보고만 재시도할 수 있다.
-* 설정창에 KOR/ENG 기기 등록 페이지와 등록 상태창을 추가했다. QR 패키지는 추가하지 않아 현재는 등록코드 복사와 승인 페이지 열기를 제공하며 QR 이미지 렌더링은 패키지 영향 확인 후 후속 연결한다.
+* 설정창에 KOR/ENG 기기 등록 페이지와 등록 상태창을 추가했다. 사용자 승인에 따라 .NET 8 호환 QRCoder 1.8.0을 추가해 승인 URL QR 이미지를 표시하며, 새 요청·폼 종료 시 이전 Bitmap을 해제한다. QR 렌더링에 실패해도 등록코드 복사와 승인 페이지 열기 및 등록 폴링은 계속 사용할 수 있다.
 * Supabase·웹·DB 스키마·운영 주소·비밀값은 추가하지 않았고 외부 서비스에 실제 쓰기를 수행하지 않았다.
 * `dotnet build DFBlackbox\DFBlackbox.csproj -c Release` 결과 경고 0개, 오류 0개로 완료했다.
 * `dotnet publish DFBlackbox\DFBlackbox.csproj -c Release -o .publishcheck`도 성공해 self-contained 단일 파일 게시 구성을 확인했다.
@@ -228,6 +228,21 @@ POST /devices/{device_id}/provisioning-result
 * 최초 관리자 Auth 사용자 UUID를 `MyCompany` 조직의 `owner`로 연결하고 `MyComputer` 설치 장소를 만드는 멱등 초기 데이터 마이그레이션 `202608120002_seed_mycompany.sql`을 추가했다. 관리자 이메일과 비밀번호는 마이그레이션에 기록하지 않았다.
 * 사용자가 두 번째 원격 `db push`를 완료해 `MyCompany` 조직, `MyComputer` 설치 장소와 최초 owner 연결이 원격 DB에 적용되었다.
 * GitHub Pages용 `web/` 승인 포털과 `.github/workflows/pages.yml` 배포 워크플로를 추가했다. 등록코드 접속 시 Supabase 로그인·조직/장소 확인·승인/거절을 제공하고, 일반 접속 시 등록 카메라의 연결 및 저장소 상태를 표시한다. 로그인 세션은 현재 브라우저 탭에만 보관하며 실제 스트리밍은 아직 연결하지 않았다.
+* 사용자가 `스트리밍` 브랜치를 원격에 푸시했고 GitHub Pages 배포 완료를 확인했다. 승인 웹 기본 URL은 `https://ornithopter83.github.io/DF_REC_CAM/`, 허용 브라우저 origin은 `https://ornithopter83.github.io`로 확정했다.
+* 사용자가 `APPROVAL_BASE_URL`과 `APPROVAL_ALLOWED_ORIGIN` 설정 후 `device-registration` Edge Function 배포를 완료했다.
+* QRCoder 추가 후 Release 빌드는 경고 0개·오류 0개로 완료했고, self-contained 단일 파일 게시도 다시 성공했다.
+* 별도 Dummy 등록 시험은 제거했다. 실제 카메라가 연결되지 않은 상태에서도 동일한 운영 Supabase 승인 흐름으로 등록할 수 있으며, 승인 결과는 실제 `settings.json` 장치 정보와 DPAPI 토큰 저장소에 반영된다.
+* 사용자가 GitHub Pages 환경에 `스트리밍` 브랜치를 허용한 뒤 당시 Dummy 설치 ID로 승인 웹 접속, 기기 승인, DFBlackbox 결과 폴링과 NAS 폴더 생성을 확인했다. 서버·웹·NAS 연결은 검증됐지만 Dummy 제거 후 정상 설치 ID의 실제 등록은 별도로 확인해야 한다.
+* Dummy 전용 로컬 DPAPI 토큰을 삭제하고, 원격 DB에서 `-dummy` 설치 ID에 해당하는 장치 1행·카메라 1행·승인 요청 2행·프로비저닝 보고 1행을 직접 정리했다. 후속 조회에서 Dummy 관련 행이 모두 0건임을 확인했으며 정상 설치 ID의 장치는 아직 등록되지 않은 상태다.
+* Dummy NAS 경로에는 파일이 없었고 `live/recordings/events/temp` 하위 폴더를 제거했다. ipDISK 가상 드라이브가 빈 카메라 및 장치 상위 폴더 삭제 요청을 반영하지 않아 두 빈 폴더는 남아 있으며, ipDISK 전용 프로그램에서 수동 정리가 필요하다.
+* 기존 UUID 4단계 NAS 경로는 초기 충돌 방지 설계였으며 NAS가 임의 생성한 구조가 아님을 확인했다. 사용자 요구에 따라 새 등록부터 `DFBlackbox/{조직명}/{공백 없는 카메라명}`을 사용하도록 `202608120003_simple_nas_path.sql` 마이그레이션을 추가했다. `MyCompany`와 기본 `Camera 1`은 `DFBlackbox/MyCompany/Camera1`이 되며 Windows 금지문자는 `_`로 치환한다. 원격 적용을 위한 `db push`는 아직 필요하다.
+* 사용자가 `202608120003_simple_nas_path.sql`의 원격 `db push`를 완료했다. 정상 설치 ID로 실제 등록한 뒤 `S:\HDD1\Media\DFBlackbox\MyCompany\Camera1` 생성 여부를 확인하면 된다.
+* 등록 완료 시 웹에서 입력한 등록명과 장치·카메라 ID, NAS 상대 경로, 등록 시각을 `HKCU\Software\DFBlackbox\DeviceRegistration`에 저장하고 설정의 기기 등록 페이지에 `등록됨: {등록명}`으로 표시하도록 추가했다. 장치 토큰은 기존 DPAPI 파일에만 유지한다.
+* 설정에 `등록 해제`를 추가했다. 장치 토큰으로 서버 폐기 요청이 성공한 뒤 로컬 레지스트리·`settings.json` 등록 식별자·DPAPI 토큰을 정리하며 NAS 폴더와 녹화 파일은 보존한다. 같은 설치 ID의 재등록은 기존 장치·카메라 행을 안전하게 재활성화한다.
+* `202608120004_device_registration_name_and_revoke.sql`에 등록명 반환, 토큰 기반 폐기, 재등록 함수를 추가하고 Edge Function에 승인 v2·상태 v2·`POST /devices/{device_id}/revoke`를 연결했다. `supabase db push --dry-run`에서 004 마이그레이션이 유일한 적용 대상으로 정상 인식됐으며 실제 `db push`와 Edge Function 재배포는 아직 필요하다.
+* 등록과 NAS 준비가 완료되면 등록 팝업을 닫았다 다시 열지 않아도 즉시 완료 화면으로 전환한다. QR·등록코드·만료시간·승인 관련 버튼을 숨기고 등록명과 NAS 상대 경로 및 `닫기` 버튼을 표시하며, 완료 화면 전환 전에 `settings.json`과 HKCU 등록 정보를 저장한다.
+* 승인 웹이 로그인 후 등록코드 상태를 조회하도록 `GET /device-claims/{claim_code}`와 `inspect_device_claim` DB 함수를 추가했다. `pending`일 때만 승인 폼을 표시하고 `approved/rejected/expired/not_found`는 읽기 전용 종료 화면으로 전환해 처리된 승인 URL을 다시 사용할 수 없게 했다.
+* 적용 완료된 004 마이그레이션은 변경하지 않고 `202608120005_claim_inspection.sql`을 별도로 추가했다. `supabase db push --dry-run`에서 005만 적용 대상으로 확인했으며, 실제 DB push·Edge Function 재배포·Pages 재배포는 아직 필요하다.
 
 ## 새 스레드 시작 명령서
 

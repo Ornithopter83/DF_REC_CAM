@@ -18,6 +18,10 @@
     passwordInput: document.querySelector("#passwordInput"),
     approvalPanel: document.querySelector("#approvalPanel"),
     approvalForm: document.querySelector("#approvalForm"),
+    claimStatePanel: document.querySelector("#claimStatePanel"),
+    claimStateIcon: document.querySelector("#claimStateIcon"),
+    claimStateTitle: document.querySelector("#claimStateTitle"),
+    claimStateDescription: document.querySelector("#claimStateDescription"),
     claimCodeValue: document.querySelector("#claimCodeValue"),
     organizationSelect: document.querySelector("#organizationSelect"),
     siteSelect: document.querySelector("#siteSelect"),
@@ -97,14 +101,50 @@
     elements.loginPanel.hidden = true;
     elements.signOutButton.hidden = false;
     setConnection("관리자 로그인됨", "ready");
-    await loadOrganizations();
     if (claimCode) {
       elements.approvalPanel.hidden = false;
       elements.portalPanel.hidden = true;
+      await loadClaimState();
     } else {
       elements.approvalPanel.hidden = true;
       elements.portalPanel.hidden = false;
       await loadPortal();
+    }
+  }
+
+  async function loadClaimState() {
+    elements.approvalForm.hidden = true;
+    elements.claimStatePanel.hidden = false;
+    setClaimState("neutral", "…", "등록 요청 확인 중", "서버에서 현재 요청 상태를 확인하고 있습니다.");
+    try {
+      const claim = await functionGet(`device-claims/${encodeURIComponent(claimCode)}`);
+      switch (claim.status) {
+        case "pending":
+          elements.claimStatePanel.hidden = true;
+          await loadOrganizations();
+          elements.approvalForm.hidden = false;
+          setConnection("승인 대기", "neutral");
+          break;
+        case "approved":
+          setClaimState("ready", "✓", "이미 완료된 등록 요청입니다", "이 요청은 이미 승인됐습니다. DFBlackbox에서 등록 및 NAS 준비 결과를 확인하세요.");
+          setConnection("승인 완료", "ready");
+          break;
+        case "rejected":
+          setClaimState("error", "×", "거절된 등록 요청입니다", "관리자가 거절한 요청은 다시 사용할 수 없습니다. DFBlackbox에서 새 등록 요청을 만드세요.");
+          setConnection("요청 거절됨", "neutral");
+          break;
+        case "expired":
+          setClaimState("neutral", "!", "만료된 등록 요청입니다", "등록 유효 시간이 지났습니다. DFBlackbox에서 새 QR을 생성하세요.");
+          setConnection("요청 만료됨", "neutral");
+          break;
+        default:
+          setClaimState("error", "?", "유효하지 않은 등록 요청입니다", "등록코드를 확인하거나 DFBlackbox에서 새 QR을 생성하세요.");
+          setConnection("요청 없음", "neutral");
+          break;
+      }
+    } catch (error) {
+      setClaimState("error", "!", "등록 요청을 확인하지 못했습니다", error.message || "잠시 후 다시 시도하세요.");
+      setConnection("확인 실패", "neutral");
     }
   }
 
@@ -156,6 +196,8 @@
       });
       showNotice("승인이 완료되었습니다. DFBlackbox가 NAS 저장소를 준비하고 있습니다.", "success");
       elements.approvalForm.hidden = true;
+      elements.claimStatePanel.hidden = false;
+      setClaimState("ready", "✓", "기기 승인이 완료되었습니다", "DFBlackbox가 승인 결과를 확인하고 NAS 저장소를 준비하고 있습니다.");
       setConnection("승인 완료", "ready");
     } catch (error) {
       showNotice(error.message, "error");
@@ -179,6 +221,8 @@
       });
       showNotice("등록 요청을 거절했습니다.", "success");
       elements.approvalForm.hidden = true;
+      elements.claimStatePanel.hidden = false;
+      setClaimState("error", "×", "등록 요청을 거절했습니다", "이 요청은 다시 승인할 수 없습니다. 새 등록이 필요하면 DFBlackbox에서 다시 시작하세요.");
       setConnection("요청 거절됨", "neutral");
     } catch (error) {
       showNotice(error.message, "error");
@@ -258,6 +302,16 @@
     return result;
   }
 
+  async function functionGet(path) {
+    const response = await fetch(`${config.functionBaseUrl}${path}`, {
+      method: "GET",
+      headers: authenticatedHeaders(),
+    });
+    const result = await readResponse(response);
+    if (!response.ok) throw new Error(errorMessage(result.error_code));
+    return result;
+  }
+
   function apiHeaders() {
     return { apikey: config.publishableKey, "content-type": "application/json" };
   }
@@ -290,6 +344,13 @@
   function setConnection(label, state) {
     elements.connectionBadge.textContent = label;
     elements.connectionBadge.className = `status-pill status-${state}`;
+  }
+
+  function setClaimState(state, icon, title, description) {
+    elements.claimStatePanel.className = `claim-state state-${state}`;
+    elements.claimStateIcon.textContent = icon;
+    elements.claimStateTitle.textContent = title;
+    elements.claimStateDescription.textContent = description;
   }
 
   function showNotice(message, type) {

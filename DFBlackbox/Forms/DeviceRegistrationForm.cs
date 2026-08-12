@@ -3,6 +3,7 @@ using DFBlackbox.Core;
 using DFBlackbox.Models;
 using DFBlackbox.Utils;
 using Krypton.Toolkit;
+using QRCoder;
 
 namespace DFBlackbox.Forms;
 
@@ -14,6 +15,8 @@ public sealed class DeviceRegistrationForm : KryptonForm
     private readonly Action<DeviceRegistrationResult>? _registrationCompleted;
     private readonly IDisposable? _ownedClient;
     private readonly Label _status = new();
+    private readonly PictureBox _qrCode = new();
+    private readonly Panel _qrHost = new();
     private readonly Label _claimCode = new();
     private readonly Label _expiresAt = new();
     private readonly Button _start = new();
@@ -24,6 +27,7 @@ public sealed class DeviceRegistrationForm : KryptonForm
     private CancellationTokenSource? _registrationCancellation;
     private string? _approvalUrl;
     private bool _closing;
+    private bool _completed;
 
     public DeviceRegistrationForm(
         DeviceRegistrationSettings settings,
@@ -44,7 +48,7 @@ public sealed class DeviceRegistrationForm : KryptonForm
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
-        ClientSize = new Size(800, 440);
+        ClientSize = new Size(800, 680);
         Build();
         UiTheme.ApplyFormTheme(this);
     }
@@ -62,6 +66,7 @@ public sealed class DeviceRegistrationForm : KryptonForm
         {
             _registrationCancellation?.Cancel();
             _registrationCancellation?.Dispose();
+            ReplaceQrCode(null);
             _ownedClient?.Dispose();
         }
 
@@ -98,6 +103,17 @@ public sealed class DeviceRegistrationForm : KryptonForm
         _status.Text = Localization.T("Registration.Ready");
         content.Controls.Add(_status);
 
+        _qrHost.Height = 248;
+        _qrHost.Margin = new Padding(0, 0, 0, 12);
+        _qrHost.Width = 736;
+        _qrCode.BackColor = Color.White;
+        _qrCode.Location = new Point(248, 0);
+        _qrCode.Size = new Size(240, 240);
+        _qrCode.SizeMode = PictureBoxSizeMode.Zoom;
+        _qrCode.Visible = false;
+        _qrHost.Controls.Add(_qrCode);
+        content.Controls.Add(_qrHost);
+
         _claimCode.AutoSize = true;
         _claimCode.Font = new Font("Consolas", 20F, FontStyle.Bold);
         _claimCode.Margin = new Padding(0, 4, 0, 8);
@@ -120,7 +136,7 @@ public sealed class DeviceRegistrationForm : KryptonForm
         ConfigureButton(_openApproval, Localization.T("Registration.OpenApproval"), (_, _) => OpenApprovalPage());
         ConfigureButton(_copyCode, Localization.T("Registration.CopyCode"), (_, _) => CopyClaimCode());
         ConfigureButton(_retryStorage, Localization.T("Registration.RetryStorage"), async (_, _) => await RetryStorageAsync());
-        ConfigureButton(_cancel, Localization.T("Button.Cancel"), (_, _) => CancelRegistration());
+        ConfigureButton(_cancel, Localization.T("Button.Cancel"), (_, _) => CancelOrClose());
         _openApproval.Enabled = false;
         _copyCode.Enabled = false;
         _retryStorage.Enabled = HasRegisteredDevice();
@@ -135,7 +151,17 @@ public sealed class DeviceRegistrationForm : KryptonForm
         CancelRegistration();
         _registrationCancellation?.Dispose();
         _registrationCancellation = new CancellationTokenSource();
+        _completed = false;
+        _qrHost.Visible = true;
+        _claimCode.Visible = true;
+        _expiresAt.Visible = true;
+        _start.Visible = true;
+        _openApproval.Visible = true;
+        _copyCode.Visible = true;
+        _retryStorage.Visible = true;
+        _cancel.Text = Localization.T("Button.Cancel");
         _approvalUrl = null;
+        ReplaceQrCode(null);
         _claimCode.Text = "-";
         _expiresAt.Text = Localization.T("Registration.ExpiresNone");
         SetRunning(running: true);
@@ -152,6 +178,10 @@ public sealed class DeviceRegistrationForm : KryptonForm
             {
                 _registrationCompleted?.Invoke(result);
                 _retryStorage.Enabled = true;
+                if (result.Stage == DeviceRegistrationStage.Completed)
+                {
+                    ShowCompletedState(result);
+                }
             }
         }
         catch (OperationCanceledException)
@@ -188,6 +218,7 @@ public sealed class DeviceRegistrationForm : KryptonForm
         {
             _claimCode.Text = progress.Claim.ClaimCode;
             _approvalUrl = progress.Claim.ApprovalUrl;
+            ShowApprovalQrCode(progress.Claim.ApprovalUrl);
             _expiresAt.Text = Localization.T(
                 "Registration.ExpiresAt",
                 progress.Claim.ExpiresAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"));
@@ -224,6 +255,10 @@ public sealed class DeviceRegistrationForm : KryptonForm
                 progress,
                 _registrationCancellation.Token);
             _registrationCompleted?.Invoke(result);
+            if (result.Stage == DeviceRegistrationStage.Completed)
+            {
+                ShowCompletedState(result);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -273,8 +308,74 @@ public sealed class DeviceRegistrationForm : KryptonForm
         _registrationCancellation?.Cancel();
     }
 
+    private void CancelOrClose()
+    {
+        if (_completed)
+        {
+            Close();
+            return;
+        }
+
+        CancelRegistration();
+    }
+
+    private void ShowCompletedState(DeviceRegistrationResult result)
+    {
+        _completed = true;
+        _approvalUrl = null;
+        ReplaceQrCode(null);
+        _qrHost.Visible = false;
+        _claimCode.Visible = true;
+        _claimCode.Font = new Font("Segoe UI", 16F, FontStyle.Bold);
+        _claimCode.Text = Localization.T(
+            "Registration.CompletedAs",
+            string.IsNullOrWhiteSpace(result.RegistrationName)
+                ? Environment.MachineName
+                : result.RegistrationName);
+        _expiresAt.Visible = true;
+        _expiresAt.Text = Localization.T("Registration.NasPath", result.NasRelativePath ?? "-");
+        _status.Text = Localization.T("Registration.Completed");
+        _start.Visible = false;
+        _openApproval.Visible = false;
+        _copyCode.Visible = false;
+        _retryStorage.Visible = false;
+        _cancel.Visible = true;
+        _cancel.Enabled = true;
+        _cancel.Text = Localization.T("Button.Close");
+    }
+
+    private void ShowApprovalQrCode(string approvalUrl)
+    {
+        try
+        {
+            using QRCodeData data = QRCodeGenerator.GenerateQrCode(
+                approvalUrl,
+                QRCodeGenerator.ECCLevel.Q);
+            using var qrCode = new QRCode(data);
+            ReplaceQrCode(qrCode.GetGraphic(5, Color.Black, Color.White, drawQuietZones: true));
+        }
+        catch
+        {
+            // QR 렌더링 실패가 등록/폴링 흐름을 중단하지 않게 한다.
+            ReplaceQrCode(null);
+        }
+    }
+
+    private void ReplaceQrCode(Image? image)
+    {
+        Image? previous = _qrCode.Image;
+        _qrCode.Image = image;
+        _qrCode.Visible = image is not null;
+        previous?.Dispose();
+    }
+
     private void SetRunning(bool running)
     {
+        if (_completed)
+        {
+            return;
+        }
+
         _start.Enabled = !running;
         _retryStorage.Enabled = !running && HasRegisteredDevice();
         _cancel.Enabled = running;

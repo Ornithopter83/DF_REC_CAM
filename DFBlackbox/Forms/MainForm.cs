@@ -13,11 +13,13 @@ public sealed partial class MainForm : KryptonForm
     private AppPaths _paths = null!;
     private SettingsManager _settingsManager = null!;
     private Logger _logger = null!;
+    private readonly WindowsDeviceRegistrationStore _deviceRegistrationStore = new();
     private readonly CameraService _cameraService = new();
     private DetectionService _detectionService = new();
     private BlackboxStateMachine _stateMachine = null!;
     private RecordingService _recordingService = null!;
     private StorageCleanupService _cleanupService = new();
+    private NasRecordingTransferService? _nasRecordingTransferService;
     private EventLogService _eventLogService = null!;
     private CancellationTokenSource? _captureCts;
     private Task? _captureTask;
@@ -393,6 +395,9 @@ public sealed partial class MainForm : KryptonForm
         _stateMachine.AutoRecordingEnabled = _isWatching && rdoAutoRecording.Checked;
         _recordingService = new RecordingService(_settings, _paths);
         _recordingService.RecoverCrashedRecordings();
+        _nasRecordingTransferService = new NasRecordingTransferService(_paths.RecVideos, _settings);
+        _nasRecordingTransferService.StatusChanged += OnNasRecordingTransferStatusChanged;
+        _nasRecordingTransferService.Start();
         StartCleanupSchedule();
         _detectionService.LoadBaselineReference(_paths.BaselineReferencePath);
         _detectionService.LoadHomeReference(_paths.HomeReferencePath);
@@ -2342,6 +2347,8 @@ public sealed partial class MainForm : KryptonForm
             return;
         }
 
+        _nasRecordingTransferService?.Enqueue(filePath);
+
         _eventLogService.Append(new Models.EventLog
         {
             StartTime = _currentRecordingStartedAt,
@@ -2353,6 +2360,17 @@ public sealed partial class MainForm : KryptonForm
             MinHomeDiffScore = _minHomeDiffScore,
             ManualRecording = string.Equals(_currentTriggerReason, "Manual", StringComparison.OrdinalIgnoreCase)
         });
+    }
+
+    private void OnNasRecordingTransferStatusChanged(NasRecordingTransferStatus status)
+    {
+        if (status.IsTransferred)
+        {
+            _logger.Info($"NAS recording transfer completed. File={status.FileName}");
+            return;
+        }
+
+        _logger.Info($"NAS recording transfer deferred. File={status.FileName}, Error={status.ErrorCode ?? "unknown"}");
     }
 
     private bool CanStartRecordingOnDisk(DateTime now, string triggerReason)
@@ -2422,7 +2440,7 @@ public sealed partial class MainForm : KryptonForm
 
         try
         {
-            var result = _cleanupService.Cleanup(_settings.Storage);
+            var result = _cleanupService.Cleanup(_settings.Storage, _settings.DeviceRegistration);
             _logger.Info($"Storage cleanup completed ({reason}). Deleted={result.DeletedFiles}, Failed={result.FailedFiles}, Freed={DiskUtils.FormatBytes(result.FreedBytes)}.");
         }
         catch (Exception ex)
@@ -2532,7 +2550,9 @@ public sealed partial class MainForm : KryptonForm
                 _recordingOnlyMode,
                 initialPage,
                 () => new EventListForm(_eventLogService),
-                CreateDeviceRegistrationForm);
+                CreateDeviceRegistrationForm,
+                GetDeviceRegistrationName,
+                RevokeDeviceRegistrationAsync);
             form.ShowDialog(this);
         }
         finally
@@ -2638,6 +2658,82 @@ public sealed partial class MainForm : KryptonForm
         _settings.DeviceRegistration.DeviceId = result.DeviceId;
         _settings.DeviceRegistration.CameraId = result.CameraId;
         _settings.DeviceRegistration.NasRelativePath = result.NasRelativePath;
+        _settingsManager.Save(_settings);
+        WindowsDeviceRegistrationInfo? existingRegistration = _deviceRegistrationStore.Load();
+        string registrationName = !string.IsNullOrWhiteSpace(result.RegistrationName)
+            ? result.RegistrationName
+            : existingRegistration is not null
+              && string.Equals(existingRegistration.DeviceId, result.DeviceId, StringComparison.Ordinal)
+                ? existingRegistration.RegistrationName
+                : Environment.MachineName;
+        _deviceRegistrationStore.Save(new WindowsDeviceRegistrationInfo(
+            registrationName,
+            result.DeviceId,
+            result.CameraId,
+            result.NasRelativePath,
+            DateTimeOffset.UtcNow));
+        _nasRecordingTransferService?.TriggerRescan();
+    }
+
+    private string? GetDeviceRegistrationName()
+    {
+        WindowsDeviceRegistrationInfo? registration = _deviceRegistrationStore.Load();
+        if (registration is not null
+            && string.Equals(
+                registration.DeviceId,
+                _settings.DeviceRegistration.DeviceId,
+                StringComparison.Ordinal))
+        {
+            return registration.RegistrationName;
+        }
+
+        return !string.IsNullOrWhiteSpace(_settings.DeviceRegistration.DeviceId)
+            ? Environment.MachineName
+            : null;
+    }
+
+    private async Task RevokeDeviceRegistrationAsync(CancellationToken cancellationToken)
+    {
+        string deviceId = _settings.DeviceRegistration.DeviceId;
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            throw new InvalidOperationException(Localization.T("Registration.NotRegistered"));
+        }
+
+        string tokenPath = Path.Combine(_paths.Root, "device-registration", "device-token.dat");
+        var tokenStore = new DpapiDeviceTokenStore(tokenPath);
+        string? deviceToken = await tokenStore.LoadAsync(deviceId, cancellationToken);
+        if (string.IsNullOrWhiteSpace(deviceToken))
+        {
+            throw new InvalidOperationException(Localization.T("Registration.MissingDeviceToken"));
+        }
+
+        using var client = new HttpDeviceRegistrationClient(
+            new Uri(_settings.DeviceRegistration.ApiBaseUrl, UriKind.Absolute),
+            TimeSpan.FromSeconds(10),
+            _settings.DeviceRegistration.SupabasePublishableKey);
+        await client.RevokeDeviceAsync(deviceId, deviceToken, cancellationToken);
+        try
+        {
+            await tokenStore.DeleteAsync(deviceId, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(ex, "Failed to delete the revoked device token.");
+        }
+
+        try
+        {
+            _deviceRegistrationStore.Delete();
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(ex, "Failed to delete the Windows device registration record.");
+        }
+
+        _settings.DeviceRegistration.DeviceId = "";
+        _settings.DeviceRegistration.CameraId = "";
+        _settings.DeviceRegistration.NasRelativePath = "";
         _settingsManager.Save(_settings);
     }
 
@@ -3863,6 +3959,12 @@ public sealed partial class MainForm : KryptonForm
         await ExitPlaybackModeAsync(clearPreview: false);
         _cleanupTimer?.Dispose();
         _fullScreenHintTimer?.Dispose();
+        if (_nasRecordingTransferService is not null)
+        {
+            _nasRecordingTransferService.StatusChanged -= OnNasRecordingTransferStatusChanged;
+            await _nasRecordingTransferService.DisposeAsync();
+            _nasRecordingTransferService = null;
+        }
         _recordingService?.Dispose();
         _detectionService.Dispose();
         _cameraService.Dispose();

@@ -67,6 +67,19 @@ public sealed class HttpDeviceRegistrationClient : IDeviceRegistrationClient, ID
         response.EnsureSuccessStatusCode();
     }
 
+    public async Task RevokeDeviceAsync(
+        string deviceId,
+        string deviceToken,
+        CancellationToken cancellationToken)
+    {
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"devices/{Uri.EscapeDataString(deviceId)}/revoke");
+        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", deviceToken);
+        using HttpResponseMessage response = await _httpClient.SendAsync(message, cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
     public void Dispose()
     {
         if (_ownsHttpClient)

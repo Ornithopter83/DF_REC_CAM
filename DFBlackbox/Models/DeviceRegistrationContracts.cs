@@ -18,7 +18,8 @@ public sealed record DeviceClaimStatusResponse(
     [property: JsonPropertyName("device_id")] string? DeviceId,
     [property: JsonPropertyName("camera_id")] string? CameraId,
     [property: JsonPropertyName("device_token")] string? DeviceToken,
-    [property: JsonPropertyName("nas_relative_path")] string? NasRelativePath);
+    [property: JsonPropertyName("nas_relative_path")] string? NasRelativePath,
+    [property: JsonPropertyName("registration_name")] string? RegistrationName);
 
 public sealed record ProvisioningResultRequest(
     [property: JsonPropertyName("registration_state")] string RegistrationState,
@@ -48,4 +49,5 @@ public sealed record DeviceRegistrationResult(
     string? DeviceId = null,
     string? CameraId = null,
     string? NasRelativePath = null,
+    string? RegistrationName = null,
     string? ErrorCode = null);

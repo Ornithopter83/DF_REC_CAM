@@ -85,6 +85,12 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
 .claim-card { display: flex; justify-content: space-between; align-items: center; margin-bottom: 26px; padding: 18px 20px; border: 1px solid #bee3f8; border-radius: 14px; background: #f0f8ff; }
 .field-caption { display: block; margin-bottom: 5px; color: var(--ink-soft); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .claim-card strong { font: 700 26px/1 "Consolas", monospace; letter-spacing: 0.08em; }
+.claim-state { display: flex; align-items: flex-start; gap: 16px; padding: 22px; border: 1px solid var(--line); border-radius: 14px; background: #f8fafc; }
+.claim-state-icon { display: grid; place-items: center; flex: 0 0 42px; height: 42px; border-radius: 50%; background: #e6f6f0; color: var(--green); font-size: 20px; font-weight: 800; }
+.claim-state h3 { margin: 1px 0 6px; font-size: 19px; }
+.claim-state p { margin: 0; color: var(--ink-soft); line-height: 1.6; }
+.claim-state.state-neutral .claim-state-icon { background: #edf2f7; color: #627d98; }
+.claim-state.state-error .claim-state-icon { background: #fff4f2; color: var(--red); }
 .notice { max-width: 760px; margin: 0 auto 18px; padding: 14px 18px; border-radius: 12px; font-weight: 600; }
 .notice-error { border: 1px solid #f2b8b5; background: #fff4f2; color: #912018; }
 .notice-success { border: 1px solid #9dd9c6; background: #edf9f5; color: #146c58; }

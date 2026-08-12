@@ -2,3 +2,6 @@ project_id = "dfblackbox"
 
 [functions.device-registration]
 verify_jwt = false
+
+[functions.media-session]
+verify_jwt = false

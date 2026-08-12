@@ -88,6 +88,7 @@ public sealed class DeviceRegistrationWorkflow
             deviceId,
             cameraId,
             relativePath,
+            registrationName: null,
             deviceToken,
             progress,
             cancellationToken);
@@ -124,6 +125,7 @@ public sealed class DeviceRegistrationWorkflow
             deviceId,
             cameraId,
             relativePath,
+            status.RegistrationName,
             deviceToken,
             progress,
             cancellationToken);
@@ -134,6 +136,7 @@ public sealed class DeviceRegistrationWorkflow
         string deviceId,
         string cameraId,
         string relativePath,
+        string? registrationName,
         string deviceToken,
         IProgress<DeviceRegistrationProgress>? progress,
         CancellationToken cancellationToken)
@@ -168,6 +171,7 @@ public sealed class DeviceRegistrationWorkflow
                 deviceId,
                 cameraId,
                 relativePath,
+                registrationName,
                 reportError);
         }
 
@@ -175,7 +179,13 @@ public sealed class DeviceRegistrationWorkflow
             ? DeviceRegistrationStage.Completed
             : DeviceRegistrationStage.StorageError;
         progress?.Report(new DeviceRegistrationProgress(stage, ErrorCode: storage.ErrorCode));
-        return new DeviceRegistrationResult(stage, deviceId, cameraId, relativePath, storage.ErrorCode);
+        return new DeviceRegistrationResult(
+            stage,
+            deviceId,
+            cameraId,
+            relativePath,
+            registrationName,
+            storage.ErrorCode);
     }
 
     private static void ValidateClaim(CreateDeviceClaimResponse claim)

@@ -89,6 +89,23 @@ public sealed class DpapiDeviceTokenStore : IDeviceTokenStore
         }
     }
 
+    public async Task DeleteAsync(string deviceId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!File.Exists(_path))
+        {
+            return;
+        }
+
+        string? storedToken = await LoadAsync(deviceId, cancellationToken);
+        if (storedToken is null)
+        {
+            throw new InvalidOperationException("The stored token belongs to another device.");
+        }
+
+        File.Delete(_path);
+    }
+
     private static byte[] Protect(byte[] plaintext) => Transform(plaintext, protect: true);
 
     private static byte[] Unprotect(byte[] protectedBytes) => Transform(protectedBytes, protect: false);
