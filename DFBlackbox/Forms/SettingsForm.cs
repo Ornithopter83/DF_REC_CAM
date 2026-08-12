@@ -19,6 +19,7 @@ public sealed class SettingsForm : KryptonForm
     private readonly bool _fullModeSelected;
     private readonly bool _recordingOnlyMode;
     private readonly Func<Form>? _createEventLog;
+    private readonly Func<DeviceRegistrationSettings, Form>? _createDeviceRegistration;
     private readonly KryptonRadioButton _rdoIpCamera = new() { Text = Localization.T("Main.IpCamera"), AutoSize = true };
     private readonly KryptonRadioButton _rdoUsbCamera = new() { Text = Localization.T("Main.UsbCamera"), AutoSize = true };
     private readonly KryptonComboBox _cmbCameraList = new() { DropDownStyle = ComboBoxStyle.DropDownList };
@@ -78,7 +79,8 @@ public sealed class SettingsForm : KryptonForm
         bool fullModeSelected = false,
         bool recordingOnlyMode = false,
         string initialPage = "camera",
-        Func<Form>? createEventLog = null)
+        Func<Form>? createEventLog = null,
+        Func<DeviceRegistrationSettings, Form>? createDeviceRegistration = null)
     {
         _settings = settings;
         _workingSettings = CloneSettings(settings);
@@ -86,6 +88,7 @@ public sealed class SettingsForm : KryptonForm
         _fullModeSelected = fullModeSelected;
         _recordingOnlyMode = recordingOnlyMode;
         _createEventLog = createEventLog;
+        _createDeviceRegistration = createDeviceRegistration;
         _selectedPage = string.IsNullOrWhiteSpace(initialPage) ? "camera" : initialPage;
         Text = Localization.T("Settings.Title");
         StartPosition = FormStartPosition.CenterParent;
@@ -223,6 +226,23 @@ public sealed class SettingsForm : KryptonForm
         generalPage.Controls.Add(Row(Labeled(Localization.T("Menu.Language"), _cmbLanguage, HalfFieldWidth)));
         generalPage.Controls.Add(Row(_chkCleanupOnStartup, _chkStartInTray));
 
+        FlowLayoutPanel registrationPage = CreatePage();
+        registrationPage.Controls.Add(Header(Localization.T("Registration.Title")));
+        registrationPage.Controls.Add(new Label
+        {
+            AutoSize = true,
+            ForeColor = Color.FromArgb(67, 77, 98),
+            Margin = new Padding(0, 8, 0, 16),
+            MaximumSize = new Size(WideFieldWidth, 0),
+            Text = Localization.T("Registration.SettingsDescription")
+        });
+        if (_createDeviceRegistration is not null)
+        {
+            Button registerDevice = Button(Localization.T("Registration.Start"), (_, _) => OpenDeviceRegistration());
+            registerDevice.Width = 160;
+            registrationPage.Controls.Add(Row(registerDevice));
+        }
+
         FlowLayoutPanel advancedPage = CreatePage();
         advancedPage.Controls.Add(Header(Localization.T("Settings.Advanced")));
         advancedPage.Controls.Add(Row(Labeled(Localization.T("Settings.ReconnectDelay"), _numReconnectDelay, HalfFieldWidth), Labeled(Localization.T("Settings.NoFrameTimeout"), _numNoFrameTimeout, HalfFieldWidth)));
@@ -284,6 +304,7 @@ public sealed class SettingsForm : KryptonForm
             AddSettingsPage(_navigationPanel, "display", "Settings.DisplayPlayback", displayPage);
         }
         AddSettingsPage(_navigationPanel, "general", "Settings.GeneralStartup", generalPage);
+        AddSettingsPage(_navigationPanel, "registration", "Registration.Title", registrationPage);
         AddSettingsPage(_navigationPanel, "advanced", "Settings.Advanced", advancedPage);
         AddSettingsPage(_navigationPanel, "eventlog", "Main.EventLog", eventLogPage);
         AddSettingsPage(_navigationPanel, "information", "Settings.Information", informationPage);
@@ -726,6 +747,54 @@ public sealed class SettingsForm : KryptonForm
         Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
     }
 
+    private void OpenDeviceRegistration()
+    {
+        SaveSettings();
+        string apiBaseUrl = _workingSettings.DeviceRegistration.ApiBaseUrl;
+        if (!Uri.TryCreate(apiBaseUrl, UriKind.Absolute, out Uri? apiUri)
+            || apiUri.Scheme is not ("http" or "https")
+            || (apiUri.Scheme == "http" && !apiUri.IsLoopback))
+        {
+            MessageBox.Show(
+                this,
+                Localization.T("Registration.InvalidApiUrl"),
+                Localization.T("Registration.Title"),
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        string nasRootFolder = _workingSettings.DeviceRegistration.NasRootFolder;
+        if (string.IsNullOrWhiteSpace(_workingSettings.DeviceRegistration.SupabasePublishableKey))
+        {
+            MessageBox.Show(
+                this,
+                Localization.T("Registration.MissingPublishableKey"),
+                Localization.T("Registration.Title"),
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        if (!Path.IsPathFullyQualified(nasRootFolder) || !Directory.Exists(nasRootFolder))
+        {
+            MessageBox.Show(
+                this,
+                Localization.T("Registration.InvalidNasRoot"),
+                Localization.T("Registration.Title"),
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        CopySettings(_workingSettings, _settings);
+        _applySettings?.Invoke();
+        using Form registration = _createDeviceRegistration!(_settings.DeviceRegistration);
+        registration.ShowDialog(this);
+        CopySettings(_settings, _workingSettings);
+        LoadSettings();
+    }
+
     private Control Buttons()
     {
         var restoreDefaults = Button(Localization.T("Settings.RestoreDefaults"), (_, _) => RestoreDefaultsToForm());
@@ -804,6 +873,7 @@ public sealed class SettingsForm : KryptonForm
         target.Overlay = CloneSettings(source).Overlay;
         target.Storage = CloneSettings(source).Storage;
         target.Recording = CloneSettings(source).Recording;
+        target.DeviceRegistration = CloneSettings(source).DeviceRegistration;
         target.Language = source.Language;
     }
 

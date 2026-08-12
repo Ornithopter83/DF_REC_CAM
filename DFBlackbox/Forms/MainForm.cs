@@ -397,7 +397,6 @@ public sealed partial class MainForm : KryptonForm
         _detectionService.LoadBaselineReference(_paths.BaselineReferencePath);
         _detectionService.LoadHomeReference(_paths.HomeReferencePath);
         ApplySettingsToUi();
-        _cleanupService.Cleanup(_settings.Storage);
         ApplyLocalization();
         lblCameraStatus.Text = Localization.T("Status.CameraReady");
         lblRtspStatus.Text = _settings.Camera.IsIpCamera ? Localization.T("Status.RtspDisconnected") : Localization.T("Status.RtspNone");
@@ -2532,7 +2531,8 @@ public sealed partial class MainForm : KryptonForm
                 rdoFullRecording.Checked,
                 _recordingOnlyMode,
                 initialPage,
-                () => new EventListForm(_eventLogService));
+                () => new EventListForm(_eventLogService),
+                CreateDeviceRegistrationForm);
             form.ShowDialog(this);
         }
         finally
@@ -2603,6 +2603,42 @@ public sealed partial class MainForm : KryptonForm
         {
             _logger?.Info("Full auto start canceled by recording mode change.");
         }
+    }
+
+    private Form CreateDeviceRegistrationForm(DeviceRegistrationSettings registrationSettings)
+    {
+        var client = new HttpDeviceRegistrationClient(
+            new Uri(registrationSettings.ApiBaseUrl, UriKind.Absolute),
+            TimeSpan.FromSeconds(10),
+            registrationSettings.SupabasePublishableKey);
+        string tokenPath = Path.Combine(_paths.Root, "device-registration", "device-token.dat");
+        var tokenStore = new DpapiDeviceTokenStore(tokenPath);
+        var request = new CreateDeviceClaimRequest(
+            Application.ProductVersion,
+            registrationSettings.InstallationId,
+            _settings.Camera.CameraType);
+        return new DeviceRegistrationForm(
+            registrationSettings,
+            request,
+            client,
+            tokenStore,
+            new NasProvisioningService(),
+            SaveDeviceRegistrationResult);
+    }
+
+    private void SaveDeviceRegistrationResult(DeviceRegistrationResult result)
+    {
+        if (string.IsNullOrWhiteSpace(result.DeviceId)
+            || string.IsNullOrWhiteSpace(result.CameraId)
+            || string.IsNullOrWhiteSpace(result.NasRelativePath))
+        {
+            return;
+        }
+
+        _settings.DeviceRegistration.DeviceId = result.DeviceId;
+        _settings.DeviceRegistration.CameraId = result.CameraId;
+        _settings.DeviceRegistration.NasRelativePath = result.NasRelativePath;
+        _settingsManager.Save(_settings);
     }
 
     private async Task AutoStartFullRecordingAsync(CancellationTokenSource cancellation)

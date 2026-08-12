@@ -9,4 +9,5 @@ public sealed class AppSettings
     public OverlaySettings Overlay { get; set; } = new();
     public StorageSettings Storage { get; set; } = new();
     public RecordingSettings Recording { get; set; } = new();
+    public DeviceRegistrationSettings DeviceRegistration { get; set; } = new();
 }

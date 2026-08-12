@@ -13,8 +13,14 @@ public sealed class StorageCleanupService
         DeleteOldFiles(paths.TempVideos, TimeSpan.FromHours(settings.TempRetentionHours), includeLocked: true, result);
         DeleteOldFiles(paths.EventVideos, TimeSpan.FromDays(settings.EventRetentionDays), includeLocked: false, result);
         DeleteOldFiles(paths.ManualVideos, TimeSpan.FromDays(settings.ManualRetentionDays), includeLocked: false, result);
-        DeleteOldFiles(paths.RecVideos, TimeSpan.FromDays(settings.RecRetentionDays), includeLocked: false, result);
-        EnforceStorageLimit(paths, settings, result);
+        DeleteOldFiles(
+            paths.RecVideos,
+            TimeSpan.FromDays(settings.RecRetentionDays),
+            includeLocked: false,
+            result,
+            paths.TempVideos,
+            paths.EventVideos,
+            paths.ManualVideos);
         return result;
     }
 
@@ -22,7 +28,12 @@ public sealed class StorageCleanupService
 
     public long GetFreeDiskBytes(string folder) => DiskUtils.GetFreeDiskBytes(folder);
 
-    private static void DeleteOldFiles(string folder, TimeSpan maxAge, bool includeLocked, StorageCleanupResult result)
+    private static void DeleteOldFiles(
+        string folder,
+        TimeSpan maxAge,
+        bool includeLocked,
+        StorageCleanupResult result,
+        params string[] excludedFolders)
     {
         if (!Directory.Exists(folder))
         {
@@ -32,6 +43,11 @@ public sealed class StorageCleanupService
         DateTime cutoff = DateTime.Now - maxAge;
         foreach (var file in Directory.EnumerateFiles(folder, "*.mp4", SearchOption.AllDirectories))
         {
+            if (excludedFolders.Any(excludedFolder => IsWithinFolder(file, excludedFolder)))
+            {
+                continue;
+            }
+
             if (!includeLocked && IsLocked(file))
             {
                 continue;
@@ -44,36 +60,12 @@ public sealed class StorageCleanupService
         }
     }
 
-    private static void EnforceStorageLimit(AppPaths paths, StorageSettings settings, StorageCleanupResult result)
+    private static bool IsWithinFolder(string path, string folder)
     {
-        long maxBytes = settings.MaxStorageGB * 1024L * 1024L * 1024L;
-        long minFreeBytes = settings.MinFreeDiskGB * 1024L * 1024L * 1024L;
-
-        DeleteUntilOk(paths.EventVideos, paths.Root, maxBytes, minFreeBytes, result);
-        DeleteUntilOk(paths.ManualVideos, paths.Root, maxBytes, minFreeBytes, result);
-        DeleteUntilOk(paths.RecVideos, paths.RecVideos, maxBytes, minFreeBytes, result);
-    }
-
-    private static void DeleteUntilOk(string folder, string root, long maxBytes, long minFreeBytes, StorageCleanupResult result)
-    {
-        if (!Directory.Exists(folder))
-        {
-            return;
-        }
-
-        foreach (var file in Directory.EnumerateFiles(folder, "*.mp4", SearchOption.AllDirectories)
-                     .Where(file => !IsLocked(file))
-                     .OrderBy(File.GetLastWriteTime))
-        {
-            long total = DiskUtils.GetFolderSizeBytes(root);
-            long free = DiskUtils.GetFreeDiskBytes(root);
-            if (total <= maxBytes && free >= minFreeBytes)
-            {
-                return;
-            }
-
-            TryDelete(file, result);
-        }
+        string fullPath = Path.GetFullPath(path);
+        string fullFolder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder))
+            + Path.DirectorySeparatorChar;
+        return fullPath.StartsWith(fullFolder, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsLocked(string path)

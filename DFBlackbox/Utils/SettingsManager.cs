@@ -54,6 +54,19 @@ public sealed class SettingsManager
             string json = File.ReadAllText(path);
             AppSettings settings = JsonSerializer.Deserialize<AppSettings>(json, _jsonOptions) ?? new AppSettings();
             settings.Language = Localization.NormalizeLanguage(settings.Language);
+            settings.DeviceRegistration ??= new DeviceRegistrationSettings();
+            if (string.IsNullOrWhiteSpace(settings.DeviceRegistration.InstallationId))
+            {
+                settings.DeviceRegistration.InstallationId = Guid.NewGuid().ToString("N");
+            }
+            if (string.IsNullOrWhiteSpace(settings.DeviceRegistration.ApiBaseUrl))
+            {
+                settings.DeviceRegistration.ApiBaseUrl = DeviceRegistrationSettings.DefaultApiBaseUrl;
+            }
+            if (string.IsNullOrWhiteSpace(settings.DeviceRegistration.SupabasePublishableKey))
+            {
+                settings.DeviceRegistration.SupabasePublishableKey = DeviceRegistrationSettings.DefaultSupabasePublishableKey;
+            }
             ApplyLegacyRoiNames(json, settings);
             return settings;
         }
