@@ -125,7 +125,7 @@ NAS:  {nas_root}/{nas_relative_path}/recordings/{yyyy}/{MM}/{dd}/{timestamp}.mp4
 * 등록된 장치에서는 대응하는 NAS 파일의 존재와 길이가 확인되지 않은 로컬 녹화를 보관기간 자동 정리에서 제외하도록 보호했다. 등록되지 않은 기존 설치의 정리 정책은 변경하지 않았다.
 * 종료 시 이송 작업과 스캔 타이머를 취소·정리하며 미완료 원본은 다음 실행에서 다시 발견한다.
 * 현재 PC의 Debug 설정이 `S:\HDD1\Media`와 `DFBlackbox/MyCompany/Camera1`을 가리키는 것을 확인했다. Debug `REC`에 기존 MP4가 없어 실제 사용자 파일 복사는 수행되지 않았다.
-* 공유 인코딩의 실제 런타임 전환은 SFU 인입 방식 확정 후 진행한다. 별도 스트리밍 인코더를 먼저 추가하지 않는다.
+* LiveKit RTMPS Ingress 확정에 따라 raw 카메라 프레임을 FFmpeg `libx264`로 한 번만 인코딩하고 MPEG-TS 출력을 MP4 녹화 sink와 RTMPS sink에 분배하는 공유 파이프라인을 구현했다. 녹화 sink는 손실 없는 우선 큐를, 송출 sink는 녹화를 막지 않는 독립 제한 큐를 사용한다.
 * `dotnet build DFBlackbox\DFBlackbox.csproj -c Release --no-restore` 결과 경고 0개, 오류 0개로 완료했다.
 * 임시 로컬 REC/NAS 루트에서 이송 서비스를 실행해 원본 유지, 날짜 상대 경로 보존, 원본·대상 길이 일치와 `.uploading` 임시 파일 정리를 확인했다.
 * `dotnet publish DFBlackbox\DFBlackbox.csproj -c Release -o .publishcheck --no-restore`가 성공해 self-contained 단일 파일 게시 구성을 확인했다.
@@ -134,3 +134,13 @@ NAS:  {nas_root}/{nas_relative_path}/recordings/{yyyy}/{MM}/{dd}/{timestamp}.mp4
 * `media-session` Edge Function을 추가했다. 사용자 JWT로 시청 lease·5분 구독 전용 LiveKit 토큰을 발급하고, 최초 요청에서만 RTMP Ingress를 생성하며, 장치에는 유효한 lease가 있을 때만 RTMPS URL과 stream key를 반환한다.
 * 동시 최초 요청은 DB 선점으로 Ingress 중복 생성을 방지하고, 마지막 heartbeat 이후 90초가 지나면 장치 폴링 응답이 `should_stream=false`가 되도록 했다.
 * `livekit-server-sdk@2.17.0`을 버전 고정 import하고 Deno 타입 검사를 통과했다. `supabase db push --dry-run`에서는 006 마이그레이션만 원격 적용 대상으로 확인됐다.
+* DFBlackbox는 기존 DPAPI 장치 토큰으로 3초마다 `media-session` 명령을 확인하고, 유효한 시청 lease가 있을 때만 RTMPS 송출을 시작한다. 송출 상태를 서버에 보고하며 lease 종료, 카메라 닫기, 네트워크 실패 시 녹화와 분리해 송출만 정리한다.
+* 웹 포털에 LiveKit Client `2.21.0`을 버전 고정해 카메라별 실시간 보기·중지와 25초 lease 갱신을 추가했다. 기존 기기 등록 승인 UI는 유지했다.
+* `202608120007_recording_catalog.sql`로 조직·장치·카메라 권한이 연결된 녹화 카탈로그와 비공개 `dfblackbox-recordings` Storage 버킷을 추가하고 원격 DB에 적용했다.
+* `recording-media` Edge Function을 배포했다. 장치는 DPAPI 토큰 인증 뒤 SHA-256 멱등 키로 6 MiB TUS 이어올리기를 수행하고, 서버가 비공개 Storage 객체의 실제 길이를 확인한 경우에만 `ready`로 전환한다.
+* `RecordingCloudSyncService`가 등록된 NAS 카메라의 `recordings` 폴더를 매분 전체 재검사한다. DFBlackbox가 이송한 파일과 사용자가 수동으로 추가한 안정된 MP4 모두 같은 업로드 흐름을 사용하며 재시작 후에도 저장된 TUS 위치에서 이어 올린다.
+* 웹 포털에 카메라별 녹화 목록·cursor 추가 조회·5분 signed URL 재생·선택 영상 다운로드를 추가했다. NAS 절대경로와 Storage 내부 경로는 웹 응답에 노출하지 않는다.
+* DB 마이그레이션 001~007의 로컬·원격 이력이 일치하고 원격 dry-run이 최신 상태임을 확인했다. `device-registration`, `media-session`, `recording-media`를 원격 재배포했으며, opaque Supabase secret key를 관리자 RPC의 Bearer 값으로 보내지 않도록 수정했다. 세 API 모두 잘못된 장치 토큰을 401로 반환하는 운영 경계 테스트를 통과했다.
+* LiveKit Ingress 생성 후 DB 저장 응답이 실패하면 저장 여부를 재확인하고, 저장되지 않은 Ingress는 즉시 삭제해 재시도 시 고아 리소스가 누적되지 않게 했다. DB 인증·권한·누락·충돌 오류도 401/403/404/409로 구분하며 JSON 본문 제한은 `Content-Length` 유무와 무관하게 실제 UTF-8 크기로 검사한다.
+* 녹화 SHA-256은 장치 측 멱등 식별자이며 서버 완료 판정은 비공개 Storage 객체의 실제 길이까지 검증한다. 서버가 Storage 객체 내용을 다시 해시하지 않는 현재 신뢰 경계와, 장치/DB 삭제 시 Storage 객체 및 중단 업로드를 정리하는 운영 수명주기 작업이 별도로 필요함을 기록했다.
+* 최종 Release 빌드는 경고 0개, 오류 0개였고 self-contained 게시, 웹 JavaScript 구문, HTML selector/ID, diff whitespace 검사를 통과했다. 실제 카메라 영상의 LiveKit 종단 간 송출과 대용량 실제 NAS 파일 업로드는 운영 앱 실행 환경에서 확인해야 한다.

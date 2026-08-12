@@ -40,17 +40,22 @@ DFBlackbox는 .NET 8 Windows Forms 기반 블랙박스/감시 녹화 애플리�
 
 ### DB
 
-- 현재 저장소에서 DB 사용 여부는 확인 필요.
+- Supabase PostgreSQL을 기기 등록, 조직·장치·카메라 권한, 실시간 시청 lease, 녹화 카탈로그에 사용한다.
+- `supabase/migrations`의 001~007이 원격 프로젝트에 적용되어 있다.
+- 녹화 웹 제공용 복사본은 비공개 `dfblackbox-recordings` Storage 버킷에 두고, NAS를 원본 보관 경계로 유지한다.
 - DB 스키마 변경은 요청 없이는 하지 않는다.
 
 ### API 연동
 
 - ONVIF/SOAP 호출이 있다.
-- 그 외 외부 API 연동 여부는 확인 필요.
+- Supabase Edge Function `device-registration`, `media-session`, `recording-media`를 사용한다.
+- 실시간 영상은 LiveKit Cloud RTMPS Ingress로 송출하고 웹에서 WebRTC로 구독한다.
+- 녹화 복사본은 장치가 6 MiB TUS 이어올리기로 Storage에 동기화하며, 재생·다운로드는 단기 signed URL을 사용한다.
 - 인증 정보와 전체 RTSP URL은 로그에 남기지 않는다.
 
 ### 배포/운영
 
 - .NET 8 Windows Forms, win-x64, self-contained, single-file publish 구성이 있다.
+- GitHub Pages는 `스트리밍` 브랜치의 정적 `web` 포털을 배포한다.
 - `ffmpeg.exe`는 용량이 커서 Git 추적 대상이 아니다.
 - 게시 확인 명령은 `dotnet publish DFBlackbox\DFBlackbox.csproj -c Release -o .publishcheck`이다.

@@ -69,3 +69,7 @@ YYYY-MM-DD
 - 완성된 로컬 녹화는 NAS에 임시 이름으로 순차 복사한 뒤 길이를 검증하고 최종 MP4로 변경한다. NAS 장애 중에는 로컬 원본을 보존하고 주기적으로 재시도하며, NAS 복사가 확인되지 않은 등록 기기의 녹화는 자동 정리에서 제외한다.
 - 실시간 미디어 서버는 LiveKit Cloud와 RTMPS Ingress를 사용한다. LiveKit URL·API Key·API Secret은 Supabase Edge Function Secret에만 두며, 웹에는 구독 전용 단기 참가 토큰을, 장치에는 해당 카메라의 RTMPS URL과 stream key만 전달한다.
 - 실시간 송출은 웹 시청자가 90초 lease를 주기적으로 갱신하는 요청형 방식으로 시작한다. DFBlackbox는 장치 토큰으로 명령을 폴링하고 lease가 끝나면 송출을 중단하며, Ingress는 카메라별로 한 번 생성해 재사용한다.
+- NAS는 원본 보관 경계로 유지하고 웹 미디어 제공용 복사본은 비공개 Supabase Storage에 둔다. DFBlackbox가 NAS `recordings` 폴더를 재검사해 수동 추가 MP4까지 SHA-256 멱등 키와 TUS 이어올리기로 동기화하며, Storage 실제 길이 검증 후에만 웹 목록에 공개한다.
+- 웹 녹화 목록은 조직 권한이 확인된 `ready` 항목만 반환하고 재생·다운로드는 5분 signed URL을 사용한다. NAS 절대경로, Storage 객체 경로, 장치 토큰과 서비스 비밀값은 브라우저 응답에 포함하지 않는다.
+- Edge Function이 관리자 DB RPC를 호출할 때 opaque `sb_secret_` 키는 `apikey` 헤더에만 전달한다. 사용자 JWT만 `Authorization: Bearer`에 전달하며, DB의 장치 인증 실패는 API에서 401로 변환한다.
+- 녹화 `source_fingerprint`는 장치가 계산한 SHA-256 멱등 식별자다. 완료 전 서버는 비공개 Storage 객체의 실제 길이를 검증하지만 현재 Storage 메타데이터로 파일 내용을 다시 해시하지 않으므로, 장치 토큰과 HTTPS/TUS 전송을 신뢰 경계로 둔다.

@@ -99,9 +99,15 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
 .section-heading { display: flex; align-items: end; justify-content: space-between; margin-bottom: 18px; }
 .camera-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 20px; }
 .camera-card { overflow: hidden; border: 1px solid rgba(159, 179, 200, 0.6); border-radius: 18px; background: #fff; box-shadow: 0 10px 30px rgba(16, 42, 67, 0.07); }
+.live-viewer { position: relative; min-height: 220px; overflow: hidden; background: #102a43; }
+.live-viewer > video { display: block; width: 100%; height: 220px; object-fit: contain; background: #07192a; }
 .video-placeholder { min-height: 220px; display: grid; place-items: center; align-content: center; padding: 24px; background: linear-gradient(145deg, #102a43, #243b53); color: #fff; text-align: center; }
 .video-placeholder p { margin: 14px 0 6px; font-weight: 700; }
 .video-placeholder small { color: #bcccdc; }
+.live-status { position: absolute; top: 12px; left: 12px; min-height: 26px; padding: 5px 10px; border-radius: 999px; background: rgba(7, 25, 42, 0.82); color: #d9e2ec; font-size: 11px; font-weight: 700; backdrop-filter: blur(8px); }
+.live-status.state-connecting { background: rgba(111, 78, 12, 0.88); color: #fff6d6; }
+.live-status.state-ready { background: rgba(20, 108, 88, 0.9); color: #fff; }
+.live-status.state-error { background: rgba(145, 32, 24, 0.9); color: #fff; }
 .camera-glyph { position: relative; width: 54px; height: 36px; border: 2px solid #9fb3c8; border-radius: 8px; }
 .camera-glyph::after { content: ""; position: absolute; right: -16px; top: 9px; border-width: 8px 14px 8px 0; border-style: solid; border-color: transparent #9fb3c8 transparent transparent; transform: rotate(180deg); }
 .camera-info { padding: 20px; }
@@ -110,8 +116,36 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
 .camera-info dl div { padding-right: 12px; }
 .camera-info dt { margin-bottom: 5px; color: var(--ink-soft); font-size: 11px; }
 .camera-info dd { margin: 0; font-size: 13px; font-weight: 700; }
+.camera-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; padding-top: 17px; border-top: 1px solid var(--line); }
+.camera-actions .button { flex: 1 1 auto; min-height: 38px; padding-inline: 13px; font-size: 12px; }
 .empty-state { grid-column: 1 / -1; display: grid; gap: 7px; padding: 54px; border: 1px dashed #9fb3c8; border-radius: 18px; color: var(--ink-soft); text-align: center; }
 .empty-state strong { color: var(--ink); font-size: 18px; }
+
+.recordings-panel { margin-top: 42px; padding-top: 34px; border-top: 1px solid var(--line); scroll-margin-top: 24px; }
+.recordings-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
+.recordings-heading h2 { margin: 7px 0 8px; font-size: clamp(25px, 4vw, 34px); letter-spacing: -0.035em; }
+.recordings-heading p { margin-bottom: 0; color: var(--ink-soft); }
+.recordings-layout { display: grid; grid-template-columns: minmax(290px, 0.78fr) minmax(420px, 1.22fr); min-height: 440px; overflow: hidden; border: 1px solid rgba(159, 179, 200, 0.6); border-radius: 18px; background: #fff; box-shadow: 0 10px 30px rgba(16, 42, 67, 0.07); }
+.recording-browser { min-height: 0; max-height: 610px; overflow-y: auto; border-right: 1px solid var(--line); background: #f8fafc; }
+.recordings-list { display: grid; }
+.recording-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; width: 100%; padding: 17px 18px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); text-align: left; }
+.recording-item:hover { background: #edf6ff; }
+.recording-item[aria-current="true"] { box-shadow: inset 3px 0 var(--blue); background: #e7f3ff; }
+.recording-item-name { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.recording-item-state { align-self: center; color: var(--green); font-size: 11px; font-weight: 700; }
+.recording-item-meta { grid-column: 1 / -1; color: var(--ink-soft); font-size: 12px; }
+.recordings-more { width: 100%; min-height: 46px; border: 0; border-bottom: 1px solid var(--line); background: #fff; color: var(--blue); font-weight: 700; }
+.recordings-more:hover { background: #edf6ff; }
+.media-message { padding: 46px 24px; color: var(--ink-soft); text-align: center; }
+.recording-player { display: flex; min-width: 0; flex-direction: column; background: #07192a; }
+.recording-player > video { width: 100%; min-height: 360px; max-height: 520px; flex: 1; object-fit: contain; background: #000; }
+.recording-player-empty { display: grid; min-height: 360px; flex: 1; place-items: center; align-content: center; gap: 14px; padding: 36px; color: #bcccdc; text-align: center; }
+.recording-player-empty strong { color: #fff; font-size: 18px; }
+.recording-player-empty span:last-child { max-width: 390px; font-size: 13px; line-height: 1.6; }
+.recording-player-footer { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 80px; padding: 14px 18px; border-top: 1px solid #243b53; background: #102a43; color: #fff; }
+.recording-player-footer > div { min-width: 0; }
+.recording-player-footer strong, .recording-player-footer span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recording-player-footer span { margin-top: 4px; color: #bcccdc; font-size: 11px; }
 
 footer { display: flex; justify-content: space-between; gap: 20px; padding: 25px max(24px, calc((100vw - 1180px) / 2)); border-top: 1px solid var(--line); color: var(--ink-soft); font-size: 12px; }
 
@@ -125,6 +159,8 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 25px
   .flow li:not(:last-child)::after { left: calc(50% + 16px); top: 15px; width: calc(100% - 32px); height: 1px; }
   .form-grid { grid-template-columns: 1fr; }
   .full-width { grid-column: auto; }
+  .recordings-layout { grid-template-columns: 1fr; }
+  .recording-browser { max-height: 330px; border-right: 0; border-bottom: 1px solid var(--line); }
   footer { flex-direction: column; padding: 22px 18px; }
 }
 
@@ -136,4 +172,7 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 25px
   .form-actions { flex-direction: column-reverse; }
   .form-actions .button { width: 100%; }
   .section-heading { align-items: flex-start; gap: 14px; flex-direction: column; }
+  .recordings-heading, .recording-player-footer { align-items: stretch; flex-direction: column; }
+  .recordings-heading .button, .recording-player-footer .button { width: 100%; }
+  .recording-player > video, .recording-player-empty { min-height: 260px; }
 }

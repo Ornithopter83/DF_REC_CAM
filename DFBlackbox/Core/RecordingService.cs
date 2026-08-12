@@ -29,6 +29,9 @@ public sealed class RecordingService : IDisposable
     private TimeSpan _frameInterval = TimeSpan.FromSeconds(1);
     private Mat? _lastWrittenFrame;
     private long _preBufferBytes;
+    private SharedEncodedMediaPipeline? _sharedPipeline;
+    private string? _ffmpegPath;
+    private bool _sharedRecordingActive;
 
     public RecordingService(AppSettings settings, AppPaths paths)
     {
@@ -42,7 +45,7 @@ public sealed class RecordingService : IDisposable
         {
             lock (_sync)
             {
-                return _writer is not null;
+                return _writer is not null || _sharedRecordingActive;
             }
         }
     }
@@ -53,7 +56,21 @@ public sealed class RecordingService : IDisposable
         {
             lock (_sync)
             {
-                return _writer?.CurrentFps ?? 0;
+                return _sharedPipeline?.CurrentWriterFps ?? _writer?.CurrentFps ?? 0;
+            }
+        }
+    }
+
+    public event EventHandler<StreamingPipelineStatus>? StreamingStatusChanged;
+
+    public StreamingPipelineStatus StreamingStatus
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _sharedPipeline?.StreamingStatus
+                    ?? new StreamingPipelineStatus(StreamingPipelineState.Idle);
             }
         }
     }
@@ -62,23 +79,108 @@ public sealed class RecordingService : IDisposable
     {
         lock (_sync)
         {
-            if (_writer is not null)
+            if (_writer is not null || _sharedRecordingActive)
             {
                 return;
             }
 
-            Mat clone = frame.Clone();
-            long sizeBytes = EstimateMatBytes(clone);
-            _preBuffer.Enqueue(new BufferedFrame(clone, timestamp, sizeBytes));
-            _preBufferBytes += sizeBytes;
-            // 이벤트가 확정되기 전 프레임도 일부 보관해 녹화 시작 직전 상황을 함께 남긴다.
-            // 메모리 사용량이 커지지 않도록 프레임 수와 추정 바이트 수를 동시에 제한한다.
-            int maxFrames = Math.Max(1, _settings.Detection.PreBufferSeconds * Math.Max(1, _settings.Camera.ActiveFps));
-            long maxBytes = Math.Max(1, _settings.Detection.PreBufferMaxMemoryMB) * 1024L * 1024L;
-            while (_preBuffer.Count > maxFrames || _preBufferBytes > maxBytes)
+            if (CanUseSharedPipeline())
             {
-                DisposeBufferedFrame(_preBuffer.Dequeue());
+                EnsureSharedTimelineUnsafe(timestamp);
+                if (timestamp < _nextFrameDue)
+                {
+                    return;
+                }
+
+                _sharedPipeline!.ConfigurePrebuffer(
+                    enabled: true,
+                    _settings.Detection.PreBufferSeconds,
+                    _settings.Detection.PreBufferMaxMemoryMB);
+                EnsureSharedPipelineUnsafe(frame);
+                _nextFrameDue = timestamp + _frameInterval;
+                WriteSharedFrameUnsafe(frame, recordingPriority: false);
+                return;
             }
+
+            AddRawPreBufferUnsafe(frame, timestamp);
+        }
+    }
+
+    public void ProcessFrame(
+        Mat frame,
+        DateTime timestamp,
+        bool feedPrebuffer,
+        bool recordingPriority)
+    {
+        lock (_sync)
+        {
+            if (_sharedRecordingActive || _sharedPipeline?.IsStreaming == true)
+            {
+                if (_sharedRecordingActive)
+                {
+                    WriteFrameForTimestampUnsafe(frame, timestamp);
+                }
+                else
+                {
+                    _sharedPipeline!.ConfigurePrebuffer(
+                        feedPrebuffer,
+                        _settings.Detection.PreBufferSeconds,
+                        _settings.Detection.PreBufferMaxMemoryMB);
+                    EnsureSharedTimelineUnsafe(timestamp);
+                    if (timestamp < _nextFrameDue)
+                    {
+                        return;
+                    }
+
+                    _nextFrameDue = timestamp + _frameInterval;
+                    WriteSharedFrameUnsafe(frame, recordingPriority: false);
+                }
+                return;
+            }
+
+            if (_writer is not null)
+            {
+                WriteFrameForTimestampUnsafe(frame, timestamp);
+                return;
+            }
+
+            if (feedPrebuffer)
+            {
+                if (CanUseSharedPipeline())
+                {
+                    _sharedPipeline!.ConfigurePrebuffer(
+                        enabled: true,
+                        _settings.Detection.PreBufferSeconds,
+                        _settings.Detection.PreBufferMaxMemoryMB);
+                    EnsureSharedPipelineUnsafe(frame);
+                    EnsureSharedTimelineUnsafe(timestamp);
+                    if (timestamp >= _nextFrameDue)
+                    {
+                        _nextFrameDue = timestamp + _frameInterval;
+                        WriteSharedFrameUnsafe(frame, recordingPriority: false);
+                    }
+                }
+                else
+                {
+                    AddRawPreBufferUnsafe(frame, timestamp);
+                }
+            }
+        }
+    }
+
+    private void AddRawPreBufferUnsafe(Mat frame, DateTime timestamp)
+    {
+        Mat clone = frame.Clone();
+        long sizeBytes = EstimateMatBytes(clone);
+        _preBuffer.Enqueue(new BufferedFrame(clone, timestamp, sizeBytes));
+        _preBufferBytes += sizeBytes;
+        // 이벤트가 확정되기 전 프레임도 일부 보관해 녹화 시작 직전 상황을 함께 남긴다.
+        // 메모리 사용량이 커지지 않도록 프레임 수와 추정 바이트 수를 동시에 제한한다.
+        int maxFrames = Math.Max(1, _settings.Detection.PreBufferSeconds * Math.Max(1, _settings.Camera.ActiveFps));
+        long maxBytes = Math.Max(1, _settings.Detection.PreBufferMaxMemoryMB) * 1024L * 1024L;
+        while (_preBuffer.Count > maxFrames || _preBufferBytes > maxBytes)
+        {
+            DisposeBufferedFrame(_preBuffer.Dequeue());
         }
     }
 
@@ -86,13 +188,14 @@ public sealed class RecordingService : IDisposable
     {
         lock (_sync)
         {
-            if (_writer is not null)
+            if (_writer is not null || _sharedRecordingActive)
             {
                 return;
             }
 
             _triggerReason = triggerReason;
             _startTime = startTime;
+            DateTime existingSharedNextFrameDue = _nextFrameDue;
             _recordingFps = GetRecordingFps();
             _frameInterval = TimeSpan.FromSeconds(1.0 / _recordingFps);
             // 사전 버퍼가 있으면 가장 오래된 버퍼 프레임의 시각부터 타임라인을 시작한다.
@@ -109,6 +212,57 @@ public sealed class RecordingService : IDisposable
             var size = GetRecordingSize(firstFrame);
             try
             {
+                if (CanUseSharedPipeline())
+                {
+                    bool encoderWasRunning = _sharedPipeline!.IsEncoderRunning;
+                    if (encoderWasRunning)
+                    {
+                        try
+                        {
+                            EnsureSharedPipelineUnsafe(firstFrame, size);
+                        }
+                        catch (InvalidOperationException)
+                        {
+                            // A setting/camera resolution change can leave an idle
+                            // prebuffer encoder at the old size. Restart it before the
+                            // recording consumer is attached; an active streamer keeps
+                            // its negotiated size and therefore is not restarted here.
+                            if (_sharedPipeline.IsStreaming)
+                            {
+                                throw;
+                            }
+
+                            _sharedPipeline.ConfigurePrebuffer(enabled: false, 0, 1);
+                            _sharedPipeline.StopEncoderIfIdle();
+                            EnsureSharedPipelineUnsafe(firstFrame, size);
+                            encoderWasRunning = false;
+                        }
+                    }
+                    else
+                    {
+                        EnsureSharedPipelineUnsafe(firstFrame, size);
+                    }
+
+                    _sharedPipeline!.StartRecording(_activeRecordingPath);
+                    _sharedRecordingActive = true;
+                    _writerSize = size;
+                    _sharedPipeline.ConfigurePrebuffer(enabled: false, 0, 1);
+                    if (encoderWasRunning)
+                    {
+                        _nextFrameDue = existingSharedNextFrameDue;
+                    }
+                    else
+                    {
+                        _nextFrameDue = startTime;
+                        if (firstFrame is not null && !firstFrame.Empty())
+                        {
+                            WriteFrameForTimestampUnsafe(firstFrame, startTime);
+                        }
+                    }
+                    ClearPreBufferUnsafe();
+                    return;
+                }
+
                 _writer = RecordingWriterFactory.Start(_activeRecordingPath, _recordingFps, size, GetRecordingBitrateKbps());
                 _writerSize = size;
                 foreach (var bufferedFrame in _preBuffer)
@@ -127,6 +281,18 @@ public sealed class RecordingService : IDisposable
             }
             catch
             {
+                if (_sharedRecordingActive)
+                {
+                    try
+                    {
+                        _sharedPipeline?.StopRecording();
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                _sharedRecordingActive = false;
                 _writer?.Dispose();
                 _writer = null;
                 _writerSize = default;
@@ -139,35 +305,29 @@ public sealed class RecordingService : IDisposable
         }
     }
 
-    public void WriteFrame(Mat frame, DateTime timestamp)
-    {
-        lock (_sync)
-        {
-            if (_writer is null)
-            {
-                return;
-            }
-
-            WriteFrameForTimestampUnsafe(frame, timestamp);
-        }
-    }
-
     public string StopRecording(DateTime endTime)
     {
         lock (_sync)
         {
-            if (_writer is null)
+            if (_writer is null && !_sharedRecordingActive)
             {
                 return "";
             }
 
-            IRecordingWriter writer = _writer;
+            IRecordingWriter? writer = _writer;
             string recordingPath = _activeRecordingPath;
             string finalPath = _activeFinalPath;
             Exception? closeError = null;
             try
             {
-                writer.Close();
+                if (_sharedRecordingActive)
+                {
+                    _sharedPipeline!.StopRecording();
+                }
+                else
+                {
+                    writer!.Close();
+                }
             }
             catch (Exception ex)
             {
@@ -175,13 +335,15 @@ public sealed class RecordingService : IDisposable
             }
             finally
             {
-                writer.Dispose();
+                writer?.Dispose();
                 _writer = null;
+                _sharedRecordingActive = false;
                 _writerSize = default;
                 _nextFrameDue = DateTime.MinValue;
                 _lastWrittenFrame?.Dispose();
                 _lastWrittenFrame = null;
                 ClearPreBufferUnsafe();
+                _sharedPipeline?.StopEncoderIfIdle();
             }
 
             if (closeError is not null)
@@ -201,6 +363,63 @@ public sealed class RecordingService : IDisposable
 
             File.Move(recordingPath, finalPath);
             return finalPath;
+        }
+    }
+
+    public string RotateRecording(DateTime rotationTime, string triggerReason, Mat? firstFrame = null)
+    {
+        lock (_sync)
+        {
+            if (_writer is null && !_sharedRecordingActive)
+            {
+                StartRecording(rotationTime, triggerReason, firstFrame);
+                return "";
+            }
+
+            if (!_sharedRecordingActive)
+            {
+                string completed = StopRecording(rotationTime);
+                StartRecording(rotationTime, triggerReason, firstFrame);
+                return completed;
+            }
+
+            string completedRecordingPath = _activeRecordingPath;
+            string completedFinalPath = _activeFinalPath;
+            string recordingFolder = GetRecordingFolder(rotationTime);
+            Directory.CreateDirectory(recordingFolder);
+            string prefix = CreateUniqueRecordingPrefix(rotationTime);
+            string nextRecordingPath = Path.Combine(recordingFolder, $"{prefix}.recording.mp4");
+            string nextFinalPath = Path.Combine(recordingFolder, $"{prefix}.mp4");
+
+            Exception? closeError = _sharedPipeline!.RotateRecording(nextRecordingPath);
+            // The encoded fan-out has already switched atomically to the next file.
+            // Update active paths before finalizing the previous file so a finalization
+            // error cannot leave the live recording pointed at the closed consumer.
+            _activeRecordingPath = nextRecordingPath;
+            _activeFinalPath = nextFinalPath;
+            _triggerReason = triggerReason;
+            _startTime = rotationTime;
+
+            if (closeError is not null)
+            {
+                throw new InvalidOperationException(
+                    $"분할 녹화 파일 마무리에 실패했습니다. {closeError.Message}",
+                    closeError);
+            }
+
+            if (!File.Exists(completedRecordingPath))
+            {
+                throw new InvalidOperationException(
+                    $"분할 임시 녹화 파일이 생성되지 않았습니다: {Path.GetFileName(completedRecordingPath)}");
+            }
+
+            if (File.Exists(completedFinalPath))
+            {
+                File.Delete(completedFinalPath);
+            }
+
+            File.Move(completedRecordingPath, completedFinalPath);
+            return completedFinalPath;
         }
     }
 
@@ -228,7 +447,7 @@ public sealed class RecordingService : IDisposable
 
     private void WriteMatUnsafe(Mat frame)
     {
-        if (_writer is null)
+        if (_writer is null && !_sharedRecordingActive)
         {
             return;
         }
@@ -237,17 +456,31 @@ public sealed class RecordingService : IDisposable
         if (frame.Width != _writerSize.Width || frame.Height != _writerSize.Height)
         {
             Cv2.Resize(frame, output, _writerSize);
-            _writer.Write(output);
+            if (_sharedRecordingActive)
+            {
+                _sharedPipeline!.WriteFrame(output, recordingPriority: true);
+            }
+            else
+            {
+                _writer!.Write(output);
+            }
         }
         else
         {
-            _writer.Write(frame);
+            if (_sharedRecordingActive)
+            {
+                _sharedPipeline!.WriteFrame(frame, recordingPriority: true);
+            }
+            else
+            {
+                _writer!.Write(frame);
+            }
         }
     }
 
     private void WriteFrameForTimestampUnsafe(Mat frame, DateTime timestamp)
     {
-        if (_writer is null)
+        if (_writer is null && !_sharedRecordingActive)
         {
             return;
         }
@@ -402,6 +635,13 @@ public sealed class RecordingService : IDisposable
         {
             _writer?.Dispose();
             _writer = null;
+            _sharedRecordingActive = false;
+            if (_sharedPipeline is not null)
+            {
+                _sharedPipeline.StreamingStatusChanged -= OnStreamingStatusChanged;
+                _sharedPipeline.Dispose();
+                _sharedPipeline = null;
+            }
             _lastWrittenFrame?.Dispose();
             _lastWrittenFrame = null;
             ClearPreBufferUnsafe();
@@ -419,13 +659,116 @@ public sealed class RecordingService : IDisposable
     {
         public static IRecordingWriter Start(string outputPath, int fps, OpenCvSharp.Size size, int bitrateKbps)
         {
-            string? ffmpegPath = FfmpegRecordingWriter.ResolveFfmpegPath();
+            string? ffmpegPath = FfmpegTool.ResolvePath();
             // FFmpeg가 있으면 지정 비트레이트를 정확히 적용하고, 없으면 OpenCV 기본 writer로 녹화만 유지한다.
             IRecordingWriter writer = ffmpegPath is not null
                 ? FfmpegRecordingWriter.Start(ffmpegPath, outputPath, fps, size, bitrateKbps)
                 : OpenCvRecordingWriter.Start(outputPath, fps, size);
             return new QueuedRecordingWriter(writer, fps);
         }
+    }
+
+    public bool StartLiveStreaming(string ingressUrl, string ingressStreamKey, Mat? firstFrame = null)
+    {
+        lock (_sync)
+        {
+            if (!CanUseSharedPipeline())
+            {
+                return false;
+            }
+
+            EnsureSharedPipelineUnsafe(firstFrame);
+            _sharedPipeline!.StartStreaming(ingressUrl, ingressStreamKey);
+            if (firstFrame is not null && !firstFrame.Empty() && !_sharedRecordingActive)
+            {
+                _nextFrameDue = DateTime.Now + _frameInterval;
+                WriteSharedFrameUnsafe(firstFrame, recordingPriority: false);
+            }
+
+            return true;
+        }
+    }
+
+    public void StopLiveStreaming()
+    {
+        lock (_sync)
+        {
+            _sharedPipeline?.StopStreaming();
+            _sharedPipeline?.StopEncoderIfIdle();
+        }
+    }
+
+    public void SuspendLiveStreaming()
+    {
+        lock (_sync)
+        {
+            _sharedPipeline?.StopStreaming();
+            _sharedPipeline?.StopEncoderIfIdle();
+            _nextFrameDue = DateTime.MinValue;
+        }
+    }
+
+    private bool CanUseSharedPipeline()
+    {
+        _ffmpegPath ??= FfmpegTool.ResolvePath();
+        if (_ffmpegPath is null)
+        {
+            return false;
+        }
+
+        if (_sharedPipeline is null)
+        {
+            _recordingFps = GetRecordingFps();
+            _frameInterval = TimeSpan.FromSeconds(1.0 / _recordingFps);
+            _sharedPipeline = new SharedEncodedMediaPipeline(
+                _ffmpegPath,
+                _recordingFps,
+                GetRecordingBitrateKbps());
+            _sharedPipeline.StreamingStatusChanged += OnStreamingStatusChanged;
+        }
+
+        return true;
+    }
+
+    private void EnsureSharedPipelineUnsafe(Mat? frame, OpenCvSharp.Size? explicitSize = null)
+    {
+        if (_sharedPipeline is null)
+        {
+            throw new InvalidOperationException("공유 미디어 파이프라인을 사용할 수 없습니다.");
+        }
+
+        OpenCvSharp.Size size = explicitSize ?? GetRecordingSize(frame);
+        _writerSize = size;
+        _sharedPipeline.EnsureEncoder(size);
+    }
+
+    private void WriteSharedFrameUnsafe(Mat frame, bool recordingPriority)
+    {
+        using var output = new Mat();
+        if (frame.Width != _writerSize.Width || frame.Height != _writerSize.Height)
+        {
+            Cv2.Resize(frame, output, _writerSize);
+            _sharedPipeline!.WriteFrame(output, recordingPriority);
+        }
+        else
+        {
+            _sharedPipeline!.WriteFrame(frame, recordingPriority);
+        }
+    }
+
+    private void EnsureSharedTimelineUnsafe(DateTime timestamp)
+    {
+        _recordingFps = GetRecordingFps();
+        _frameInterval = TimeSpan.FromSeconds(1.0 / _recordingFps);
+        if (_nextFrameDue == DateTime.MinValue)
+        {
+            _nextFrameDue = timestamp;
+        }
+    }
+
+    private void OnStreamingStatusChanged(object? sender, StreamingPipelineStatus status)
+    {
+        StreamingStatusChanged?.Invoke(this, status);
     }
 
     private sealed class QueuedRecordingWriter : IRecordingWriter

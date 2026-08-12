@@ -10,7 +10,13 @@ Deno.serve(async (request) => {
     if (corsResponse) return corsResponse;
 
     const publishableKey = request.headers.get("apikey")?.trim() ?? "";
-    if (!isConfiguredKey(publishableKey, "SUPABASE_PUBLISHABLE_KEYS", "sb_publishable_")) {
+    if (
+      !isConfiguredKey(
+        publishableKey,
+        "SUPABASE_PUBLISHABLE_KEYS",
+        "sb_publishable_",
+      )
+    ) {
       return json({ error_code: "invalid_publishable_key" }, 401, request);
     }
 
@@ -19,7 +25,9 @@ Deno.serve(async (request) => {
       return await createClaim(request);
     }
 
-    const claimStatus = route.match(/^device-claims\/([0-9a-f-]{36})\/status$/i);
+    const claimStatus = route.match(
+      /^device-claims\/([0-9a-f-]{36})\/status$/i,
+    );
     if (request.method === "GET" && claimStatus) {
       return await getClaimStatus(claimStatus[1], request);
     }
@@ -29,17 +37,23 @@ Deno.serve(async (request) => {
       return await inspectClaim(claimInspection[1], request, publishableKey);
     }
 
-    const claimApproval = route.match(/^device-claims\/([A-Z0-9-]{6,32})\/approve$/i);
+    const claimApproval = route.match(
+      /^device-claims\/([A-Z0-9-]{6,32})\/approve$/i,
+    );
     if (request.method === "POST" && claimApproval) {
       return await approveClaim(claimApproval[1], request, publishableKey);
     }
 
-    const claimRejection = route.match(/^device-claims\/([A-Z0-9-]{6,32})\/reject$/i);
+    const claimRejection = route.match(
+      /^device-claims\/([A-Z0-9-]{6,32})\/reject$/i,
+    );
     if (request.method === "POST" && claimRejection) {
       return await rejectClaim(claimRejection[1], request, publishableKey);
     }
 
-    const provisioning = route.match(/^devices\/([0-9a-f-]{36})\/provisioning-result$/i);
+    const provisioning = route.match(
+      /^devices\/([0-9a-f-]{36})\/provisioning-result$/i,
+    );
     if (request.method === "POST" && provisioning) {
       return await reportProvisioning(provisioning[1], request);
     }
@@ -86,25 +100,38 @@ async function createClaim(request: Request): Promise<Response> {
   const approvalUrl = new URL(approvalBaseUrl);
   approvalUrl.searchParams.set("code", claimCode);
 
-  return json({
-    claim_id: row.claim_id,
-    claim_code: claimCode,
-    approval_url: approvalUrl.toString(),
-    expires_at: row.expires_at,
-  }, 201, request);
+  return json(
+    {
+      claim_id: row.claim_id,
+      claim_code: claimCode,
+      approval_url: approvalUrl.toString(),
+      expires_at: row.expires_at,
+    },
+    201,
+    request,
+  );
 }
 
-async function getClaimStatus(claimId: string, request: Request): Promise<Response> {
-  const rows = await adminRpc("consume_device_claim_v2", { p_claim_id: claimId });
+async function getClaimStatus(
+  claimId: string,
+  request: Request,
+): Promise<Response> {
+  const rows = await adminRpc("consume_device_claim_v2", {
+    p_claim_id: claimId,
+  });
   const row = firstRow(rows);
-  return json({
-    status: row.status,
-    device_id: row.device_id ?? null,
-    camera_id: row.camera_id ?? null,
-    device_token: row.device_token ?? null,
-    nas_relative_path: row.nas_relative_path ?? null,
-    registration_name: row.registration_name ?? null,
-  }, 200, request);
+  return json(
+    {
+      status: row.status,
+      device_id: row.device_id ?? null,
+      camera_id: row.camera_id ?? null,
+      device_token: row.device_token ?? null,
+      nas_relative_path: row.nas_relative_path ?? null,
+      registration_name: row.registration_name ?? null,
+    },
+    200,
+    request,
+  );
 }
 
 async function inspectClaim(
@@ -113,14 +140,23 @@ async function inspectClaim(
   publishableKey: string,
 ): Promise<Response> {
   const userJwt = bearerToken(request);
-  const rows = await userRpc("inspect_device_claim", {
-    p_claim_code: claimCode,
-  }, publishableKey, userJwt);
+  const rows = await userRpc(
+    "inspect_device_claim",
+    {
+      p_claim_code: claimCode,
+    },
+    publishableKey,
+    userJwt,
+  );
   const row = firstRow(rows);
-  return json({
-    status: row.status,
-    expires_at: row.expires_at ?? null,
-  }, 200, request);
+  return json(
+    {
+      status: row.status,
+      expires_at: row.expires_at ?? null,
+    },
+    200,
+    request,
+  );
 }
 
 async function approveClaim(
@@ -133,12 +169,17 @@ async function approveClaim(
   const organizationId = requiredUuid(body, "organization_id");
   const siteId = requiredUuid(body, "site_id");
   const deviceName = optionalString(body, "device_name", 120);
-  const rows = await userRpc("approve_device_claim_v2", {
-    p_claim_code: claimCode,
-    p_organization_id: organizationId,
-    p_site_id: siteId,
-    p_device_name: deviceName,
-  }, publishableKey, userJwt);
+  const rows = await userRpc(
+    "approve_device_claim_v2",
+    {
+      p_claim_code: claimCode,
+      p_organization_id: organizationId,
+      p_site_id: siteId,
+      p_device_name: deviceName,
+    },
+    publishableKey,
+    userJwt,
+  );
   return json(firstRow(rows), 200, request);
 }
 
@@ -150,14 +191,22 @@ async function rejectClaim(
   const userJwt = bearerToken(request);
   const body = await readJson(request);
   const organizationId = requiredUuid(body, "organization_id");
-  await userRpc("reject_device_claim", {
-    p_claim_code: claimCode,
-    p_organization_id: organizationId,
-  }, publishableKey, userJwt);
+  await userRpc(
+    "reject_device_claim",
+    {
+      p_claim_code: claimCode,
+      p_organization_id: organizationId,
+    },
+    publishableKey,
+    userJwt,
+  );
   return json({ rejected: true }, 200, request);
 }
 
-async function reportProvisioning(deviceId: string, request: Request): Promise<Response> {
+async function reportProvisioning(
+  deviceId: string,
+  request: Request,
+): Promise<Response> {
   const deviceToken = bearerToken(request);
   const body = await readJson(request);
   const registrationState = requiredString(body, "registration_state", 32);
@@ -173,7 +222,10 @@ async function reportProvisioning(deviceId: string, request: Request): Promise<R
   return json({ accepted: true }, 200, request);
 }
 
-async function revokeDevice(deviceId: string, request: Request): Promise<Response> {
+async function revokeDevice(
+  deviceId: string,
+  request: Request,
+): Promise<Response> {
   const deviceToken = bearerToken(request);
   await adminRpc("revoke_device_registration", {
     p_device_id: deviceId,
@@ -183,8 +235,14 @@ async function revokeDevice(deviceId: string, request: Request): Promise<Respons
 }
 
 async function adminRpc(name: string, body: JsonObject): Promise<unknown> {
-  const secretKey = configuredKey("DFBLACKBOX_SUPABASE_SECRET_KEY", "SUPABASE_SECRET_KEYS", "sb_secret_");
-  return await rpc(name, body, { apikey: secretKey });
+  const secretKey = configuredKey(
+    "DFBLACKBOX_SUPABASE_SECRET_KEY",
+    "SUPABASE_SECRET_KEYS",
+    "sb_secret_",
+  );
+  return await rpc(name, body, {
+    apikey: secretKey,
+  });
 }
 
 async function userRpc(
@@ -199,7 +257,11 @@ async function userRpc(
   });
 }
 
-async function rpc(name: string, body: JsonObject, headers: Record<string, string>): Promise<unknown> {
+async function rpc(
+  name: string,
+  body: JsonObject,
+  headers: Record<string, string>,
+): Promise<unknown> {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim();
   if (!supabaseUrl) throw new RequestError("supabase_url_not_configured", 503);
 
@@ -209,35 +271,100 @@ async function rpc(name: string, body: JsonObject, headers: Record<string, strin
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    const status = response.status === 401 || response.status === 403 ? 403 : 502;
-    throw new RequestError(status === 403 ? "operation_not_authorized" : "database_operation_failed", status);
+    const databaseError = await readDatabaseError(response);
+    if (databaseError === "device_authentication_failed") {
+      throw new RequestError(databaseError, 401);
+    }
+    if (
+      databaseError.endsWith("_denied") ||
+      databaseError.endsWith("_not_authorized") ||
+      databaseError === "authentication_required"
+    ) {
+      throw new RequestError("operation_not_authorized", 403);
+    }
+    if (databaseError.endsWith("_not_found")) {
+      throw new RequestError(databaseError, 404);
+    }
+    if (databaseError === "claim_expired") {
+      throw new RequestError(databaseError, 410);
+    }
+    if (
+      databaseError === "claim_not_pending" ||
+      databaseError === "claim_already_approved_elsewhere" ||
+      databaseError === "installation_already_registered"
+    ) {
+      throw new RequestError(databaseError, 409);
+    }
+    if (
+      databaseError.startsWith("invalid_") ||
+      databaseError === "unexpected_error_code"
+    ) {
+      throw new RequestError(databaseError, 400);
+    }
+    const status = response.status === 401 || response.status === 403
+      ? 403
+      : 502;
+    throw new RequestError(
+      status === 403 ? "operation_not_authorized" : "database_operation_failed",
+      status,
+    );
   }
 
   if (response.status === 204) return null;
   return await response.json();
 }
 
-async function readJson(request: Request): Promise<JsonObject> {
-  const contentLength = Number(request.headers.get("content-length") ?? "0");
-  if (contentLength > 4096) throw new RequestError("request_too_large", 413);
+async function readDatabaseError(response: Response): Promise<string> {
   try {
-    const value = await request.json();
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
-    return value as JsonObject;
+    const value = await response.json();
+    const message =
+      value && typeof value === "object" && !Array.isArray(value) &&
+        typeof (value as JsonObject).message === "string"
+        ? String((value as JsonObject).message).trim()
+        : "";
+    return message.match(/^[a-z][a-z0-9_]{1,79}$/)?.[0] ?? "";
   } catch {
+    return "";
+  }
+}
+
+async function readJson(request: Request): Promise<JsonObject> {
+  try {
+    const raw = await request.text();
+    if (new TextEncoder().encode(raw).byteLength > 4096) {
+      throw new RequestError("request_too_large", 413);
+    }
+    const value = JSON.parse(raw);
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error();
+    }
+    return value as JsonObject;
+  } catch (error) {
+    if (error instanceof RequestError) throw error;
     throw new RequestError("invalid_json", 400);
   }
 }
 
-function requiredString(body: JsonObject, key: string, maxLength: number): string {
+function requiredString(
+  body: JsonObject,
+  key: string,
+  maxLength: number,
+): string {
   const value = body[key];
-  if (typeof value !== "string" || !value.trim() || value.trim().length > maxLength) {
+  if (
+    typeof value !== "string" || !value.trim() ||
+    value.trim().length > maxLength
+  ) {
     throw new RequestError(`invalid_${key}`, 400);
   }
   return value.trim();
 }
 
-function optionalString(body: JsonObject, key: string, maxLength: number): string | null {
+function optionalString(
+  body: JsonObject,
+  key: string,
+  maxLength: number,
+): string | null {
   const value = body[key];
   if (value === null || value === undefined || value === "") return null;
   if (typeof value !== "string" || value.trim().length > maxLength) {
@@ -248,7 +375,10 @@ function optionalString(body: JsonObject, key: string, maxLength: number): strin
 
 function requiredUuid(body: JsonObject, key: string): string {
   const value = requiredString(body, key, 36);
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(value)
+  ) {
     throw new RequestError(`invalid_${key}`, 400);
   }
   return value;
@@ -257,18 +387,25 @@ function requiredUuid(body: JsonObject, key: string): string {
 function bearerToken(request: Request): string {
   const authorization = request.headers.get("authorization") ?? "";
   const match = authorization.match(/^Bearer\s+(.+)$/i);
-  if (!match || !match[1].trim()) throw new RequestError("authorization_required", 401);
+  if (!match || !match[1].trim()) {
+    throw new RequestError("authorization_required", 401);
+  }
   return match[1].trim();
 }
 
 function randomClaimCode(): string {
   const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
   const bytes = crypto.getRandomValues(new Uint8Array(8));
-  return Array.from(bytes, (value) => alphabet[value % alphabet.length]).join("");
+  return Array.from(bytes, (value) => alphabet[value % alphabet.length]).join(
+    "",
+  );
 }
 
 function firstRow(value: unknown): JsonObject {
-  if (!Array.isArray(value) || value.length !== 1 || !value[0] || typeof value[0] !== "object") {
+  if (
+    !Array.isArray(value) || value.length !== 1 || !value[0] ||
+    typeof value[0] !== "object"
+  ) {
     throw new RequestError("invalid_database_response", 502);
   }
   return value[0] as JsonObject;
@@ -291,23 +428,36 @@ function isHttpsUrl(value: string): boolean {
   }
 }
 
-function configuredKey(directName: string, dictionaryName: string, prefix: string): string {
+function configuredKey(
+  directName: string,
+  dictionaryName: string,
+  prefix: string,
+): string {
   const direct = Deno.env.get(directName)?.trim();
   if (direct?.startsWith(prefix)) return direct;
   const keys = configuredKeys(dictionaryName, prefix);
-  if (keys.length === 0) throw new RequestError("server_key_not_configured", 503);
+  if (keys.length === 0) {
+    throw new RequestError("server_key_not_configured", 503);
+  }
   return keys[0];
 }
 
-function isConfiguredKey(candidate: string, dictionaryName: string, prefix: string): boolean {
-  return candidate.startsWith(prefix) && configuredKeys(dictionaryName, prefix).includes(candidate);
+function isConfiguredKey(
+  candidate: string,
+  dictionaryName: string,
+  prefix: string,
+): boolean {
+  return candidate.startsWith(prefix) &&
+    configuredKeys(dictionaryName, prefix).includes(candidate);
 }
 
 function configuredKeys(name: string, prefix: string): string[] {
   const raw = Deno.env.get(name);
   if (!raw) return [];
   try {
-    return collectStrings(JSON.parse(raw)).filter((value) => value.startsWith(prefix));
+    return collectStrings(JSON.parse(raw)).filter((value) =>
+      value.startsWith(prefix)
+    );
   } catch {
     return [];
   }
@@ -316,7 +466,9 @@ function configuredKeys(name: string, prefix: string): string[] {
 function collectStrings(value: unknown): string[] {
   if (typeof value === "string") return [value];
   if (Array.isArray(value)) return value.flatMap(collectStrings);
-  if (value && typeof value === "object") return Object.values(value).flatMap(collectStrings);
+  if (value && typeof value === "object") {
+    return Object.values(value).flatMap(collectStrings);
+  }
   return [];
 }
 

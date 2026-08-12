@@ -20,6 +20,8 @@ public sealed partial class MainForm : KryptonForm
     private RecordingService _recordingService = null!;
     private StorageCleanupService _cleanupService = new();
     private NasRecordingTransferService? _nasRecordingTransferService;
+    private RecordingCloudSyncService? _recordingCloudSyncService;
+    private DeviceStreamCoordinator? _deviceStreamCoordinator;
     private EventLogService _eventLogService = null!;
     private CancellationTokenSource? _captureCts;
     private Task? _captureTask;
@@ -395,9 +397,35 @@ public sealed partial class MainForm : KryptonForm
         _stateMachine.AutoRecordingEnabled = _isWatching && rdoAutoRecording.Checked;
         _recordingService = new RecordingService(_settings, _paths);
         _recordingService.RecoverCrashedRecordings();
+        string deviceTokenPath = Path.Combine(_paths.Root, "device-registration", "device-token.dat");
+        var deviceTokenStore = new DpapiDeviceTokenStore(deviceTokenPath);
+        var mediaSessionClient = new HttpMediaSessionClient(
+            new Uri(_settings.DeviceRegistration.ApiBaseUrl, UriKind.Absolute),
+            TimeSpan.FromSeconds(15),
+            _settings.DeviceRegistration.SupabasePublishableKey);
+        _deviceStreamCoordinator = new DeviceStreamCoordinator(
+            mediaSessionClient,
+            deviceTokenStore,
+            _settings.DeviceRegistration,
+            _recordingService,
+            _logger,
+            TryCloneLiveStreamFrame);
+        _deviceStreamCoordinator.Start();
         _nasRecordingTransferService = new NasRecordingTransferService(_paths.RecVideos, _settings);
         _nasRecordingTransferService.StatusChanged += OnNasRecordingTransferStatusChanged;
         _nasRecordingTransferService.Start();
+        var recordingMediaClient = new HttpRecordingMediaClient(
+            HttpRecordingMediaClient.DeriveBaseAddress(
+                new Uri(_settings.DeviceRegistration.ApiBaseUrl, UriKind.Absolute)),
+            TimeSpan.FromMinutes(10),
+            _settings.DeviceRegistration.SupabasePublishableKey);
+        _recordingCloudSyncService = new RecordingCloudSyncService(
+            _settings,
+            deviceTokenStore,
+            recordingMediaClient,
+            Path.Combine(_paths.Root, "cloud-sync", "recording-upload-state.json"));
+        _recordingCloudSyncService.StatusChanged += OnRecordingCloudSyncStatusChanged;
+        _recordingCloudSyncService.Start();
         StartCleanupSchedule();
         _detectionService.LoadBaselineReference(_paths.BaselineReferencePath);
         _detectionService.LoadHomeReference(_paths.HomeReferencePath);
@@ -872,6 +900,7 @@ public sealed partial class MainForm : KryptonForm
 
     private async Task DisconnectCameraAsync()
     {
+        _recordingService.SuspendLiveStreaming();
         await CloseCameraPreviewAsync();
         StopRecordingIfActive(DateTime.Now);
         _cameraService.Close();
@@ -906,6 +935,7 @@ public sealed partial class MainForm : KryptonForm
 
     private async Task CloseCameraPreviewAsync()
     {
+        _recordingService.SuspendLiveStreaming();
         await StopCaptureLoopAsync();
         StopRecordingIfActive(DateTime.Now);
         SetWatching(false);
@@ -1930,7 +1960,13 @@ public sealed partial class MainForm : KryptonForm
                     bool recordingAtFrameStart = _recordingService.IsRecording;
                     if (recordingAtFrameStart)
                     {
-                        _recordingService.WriteFrame(frame, now);
+                        // Keep recording ahead of detection/preview work. The shared
+                        // encoder fans this same H.264 output to RTMPS when requested.
+                        _recordingService.ProcessFrame(
+                            frame,
+                            now,
+                            feedPrebuffer: false,
+                            recordingPriority: true);
                     }
 
                     if (!recordingAtFrameStart
@@ -1949,9 +1985,15 @@ public sealed partial class MainForm : KryptonForm
                         : new StateUpdateResult { NewState = _stateMachine.CurrentState };
                     // 녹화가 아직 시작되지 않았더라도 감시/수동 요청 중이면 사전 버퍼를 채운다.
                     // 실제 트리거가 발생하면 이 버퍼가 녹화 파일 앞부분에 먼저 기록된다.
-                    if (!_recordingService.IsRecording && ((_isWatching && rdoAutoRecording.Checked) || _manualRecordingRequested))
+                    bool feedPrebuffer = !recordingAtFrameStart
+                        && ((_isWatching && rdoAutoRecording.Checked) || _manualRecordingRequested);
+                    if (!recordingAtFrameStart)
                     {
-                        _recordingService.AddToPreBuffer(frame, now);
+                        _recordingService.ProcessFrame(
+                            frame,
+                            now,
+                            feedPrebuffer,
+                            recordingPriority: false);
                     }
 
                     if (_fullRecordingRequested)
@@ -1981,11 +2023,6 @@ public sealed partial class MainForm : KryptonForm
 
                     if (_recordingService.IsRecording)
                     {
-                        if (!recordingAtFrameStart)
-                        {
-                            _recordingService.WriteFrame(frame, now);
-                        }
-
                         _maxMotionScore = Math.Max(_maxMotionScore, result.PersonMotionScore);
                         _maxRodMotionScore = Math.Max(_maxRodMotionScore, result.RodMotionScore);
                         _minHomeDiffScore = Math.Min(_minHomeDiffScore, result.HomeDiffScore);
@@ -2367,10 +2404,22 @@ public sealed partial class MainForm : KryptonForm
         if (status.IsTransferred)
         {
             _logger.Info($"NAS recording transfer completed. File={status.FileName}");
+            _recordingCloudSyncService?.TriggerRescan();
             return;
         }
 
         _logger.Info($"NAS recording transfer deferred. File={status.FileName}, Error={status.ErrorCode ?? "unknown"}");
+    }
+
+    private void OnRecordingCloudSyncStatusChanged(RecordingCloudSyncStatus status)
+    {
+        if (status.IsReady)
+        {
+            _logger.Info($"Cloud recording sync completed. File={status.FileName}");
+            return;
+        }
+
+        _logger.Info($"Cloud recording sync deferred. File={status.FileName}, Error={status.ErrorCode ?? "unknown"}");
     }
 
     private bool CanStartRecordingOnDisk(DateTime now, string triggerReason)
@@ -2673,6 +2722,7 @@ public sealed partial class MainForm : KryptonForm
             result.NasRelativePath,
             DateTimeOffset.UtcNow));
         _nasRecordingTransferService?.TriggerRescan();
+        _recordingCloudSyncService?.TriggerRescan();
     }
 
     private string? GetDeviceRegistrationName()
@@ -3275,9 +3325,46 @@ public sealed partial class MainForm : KryptonForm
 
             if (_recordingService.IsRecording)
             {
-                string filePath = _recordingService.StopRecording(now);
-                ShowRecordingStamp(Localization.T("Stamp.RecordingStopped"), Color.FromArgb(192, 92, 24));
-                SaveEventLog(filePath, now);
+                if (!CanStartRecordingOnDisk(now, "Full"))
+                {
+                    string stoppedPath = _recordingService.StopRecording(now);
+                    ShowRecordingStamp(Localization.T("Stamp.RecordingStopped"), Color.FromArgb(192, 92, 24));
+                    SaveEventLog(stoppedPath, now);
+                    _fullRecordingRequested = false;
+                    _nextFullRecordingRotationAt = DateTime.MinValue;
+                    BeginInvoke(UpdateControlStates);
+                    return;
+                }
+
+                _nextFullRecordingRotationAt = now.Add(GetFullInterval());
+                try
+                {
+                    string completedPath = _recordingService.RotateRecording(now, "Full", frame);
+                    SaveEventLog(completedPath, now);
+                    ShowRecordingStamp(Localization.T("Stamp.RecordingStarted"), Color.FromArgb(24, 132, 74));
+                    _currentRecordingStartedAt = now;
+                    _currentTriggerReason = "Full";
+                    _maxMotionScore = 0;
+                    _maxRodMotionScore = 0;
+                    _minHomeDiffScore = double.MaxValue;
+                    BeginInvoke(UpdateControlStates);
+                    return;
+                }
+                catch
+                {
+                    _fullRecordingRequested = false;
+                    _nextFullRecordingRotationAt = DateTime.MinValue;
+                    try
+                    {
+                        _recordingService.StopRecording(now);
+                    }
+                    catch
+                    {
+                    }
+
+                    BeginInvoke(UpdateControlStates);
+                    throw;
+                }
             }
 
             if (!CanStartRecordingOnDisk(now, "Full"))
@@ -3671,6 +3758,18 @@ public sealed partial class MainForm : KryptonForm
         }
     }
 
+    private Mat? TryCloneLiveStreamFrame()
+    {
+        if (!IsCameraPreviewOpen()
+            || _lastFrameAt == DateTime.MinValue
+            || DateTime.Now - _lastFrameAt >= TimeSpan.FromSeconds(3))
+        {
+            return null;
+        }
+
+        return TryCloneLatestFrame();
+    }
+
     private bool HasRecentLatestFrame()
     {
         if (_lastFrameAt == DateTime.MinValue || DateTime.Now - _lastFrameAt >= TimeSpan.FromSeconds(3))
@@ -3955,6 +4054,11 @@ public sealed partial class MainForm : KryptonForm
         CancelAutoStartFullRecording(writeLog: false);
         await StopCaptureLoopAsync();
         StopRecordingIfActive(DateTime.Now);
+        if (_deviceStreamCoordinator is not null)
+        {
+            await _deviceStreamCoordinator.DisposeAsync();
+            _deviceStreamCoordinator = null;
+        }
         _settingsManager?.Save(_settings);
         await ExitPlaybackModeAsync(clearPreview: false);
         _cleanupTimer?.Dispose();
@@ -3964,6 +4068,12 @@ public sealed partial class MainForm : KryptonForm
             _nasRecordingTransferService.StatusChanged -= OnNasRecordingTransferStatusChanged;
             await _nasRecordingTransferService.DisposeAsync();
             _nasRecordingTransferService = null;
+        }
+        if (_recordingCloudSyncService is not null)
+        {
+            _recordingCloudSyncService.StatusChanged -= OnRecordingCloudSyncStatusChanged;
+            await _recordingCloudSyncService.DisposeAsync();
+            _recordingCloudSyncService = null;
         }
         _recordingService?.Dispose();
         _detectionService.Dispose();
