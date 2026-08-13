@@ -146,3 +146,4 @@ NAS:  {nas_root}/{nas_relative_path}/recordings/{yyyy}/{MM}/{dd}/{timestamp}.mp4
 * 최종 Release 빌드는 경고 0개, 오류 0개였고 self-contained 게시, 웹 JavaScript 구문, HTML selector/ID, diff whitespace 검사를 통과했다. 실제 카메라 영상의 LiveKit 종단 간 송출과 대용량 실제 NAS 파일 업로드는 운영 앱 실행 환경에서 확인해야 한다.
 * 2026-08-13 세션 수명주기 보완 후 Release 빌드와 self-contained 단일 파일 게시를 다시 통과했고, 번들 FFmpeg의 `libx264`·RTMP·RTMPS 지원과 웹·Edge·마이그레이션 정적 계약을 확인했다.
 * 현재 PC에는 PnP 카메라가 없어 실제 WebRTC 종단 간 송출과 녹화 동시성 검증은 수행하지 못했다. 신규 008을 원격 적용해 마이그레이션 001~008 이력을 일치시키고 `media-session`을 재배포했으며, 장치 명령 조회와 상태 보고 모두 잘못된 장치 토큰에 401을 반환함을 확인했다.
+* `스트리밍` 브랜치 푸시 후 GitHub Pages 배포 워크플로가 성공해 웹 포털 변경 배포를 확인했다.
