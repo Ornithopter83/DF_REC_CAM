@@ -25,4 +25,7 @@ public enum StreamingPipelineState
 
 public sealed record StreamingPipelineStatus(
     StreamingPipelineState State,
-    string? ErrorCode = null);
+    string? ErrorCode = null)
+{
+    public long PublisherGeneration { get; init; }
+}

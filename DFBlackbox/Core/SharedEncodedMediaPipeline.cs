@@ -22,6 +22,7 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
     private readonly int _fps;
     private readonly int _bitrateKbps;
     private readonly Queue<EncodedChunk> _prebuffer = new();
+    private readonly HashSet<Task> _streamingCleanupTasks = [];
     private EncoderRuntime? _encoder;
     private EncodedSink? _recordingSink;
     private EncodedSink? _streamingSink;
@@ -30,6 +31,7 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
     private long _prebufferMaxBytes;
     private bool _prebufferEnabled;
     private bool _streamHasReceivedMedia;
+    private long _streamingGeneration;
     private bool _disposed;
     private StreamingPipelineStatus _streamingStatus = new(StreamingPipelineState.Idle);
 
@@ -77,7 +79,7 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
                     failedStreaming = _streamingSink;
                     _streamingSink = null;
                     _streamHasReceivedMedia = false;
-                    SetStreamingStatusUnsafe(new StreamingPipelineStatus(
+                    SetStreamingStatusUnsafe(CreateStreamingStatusUnsafe(
                         StreamingPipelineState.Error,
                         "rtmps_publish_failed"));
                 }
@@ -87,7 +89,7 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
 
             if (failedStreaming is not null)
             {
-                DisposeStreamingSink(failedStreaming);
+                ScheduleStreamingSinkCleanup(failedStreaming);
             }
 
             return status;
@@ -301,24 +303,42 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
     public void StartStreaming(string ingressUrl, string ingressStreamKey)
     {
         string targetUrl = BuildRtmpTarget(ingressUrl, ingressStreamKey);
-        EncodedSink sink = EncodedSink.StartStreaming(_ffmpegPath, targetUrl);
-        EncodedSink? previous = null;
+        EncodedSink? previous;
         lock (_sync)
         {
             ThrowIfDisposed();
             previous = _streamingSink;
-            _streamingSink = sink;
+            _streamingSink = null;
             _streamHasReceivedMedia = false;
-            SetStreamingStatusUnsafe(new StreamingPipelineStatus(StreamingPipelineState.Starting));
+            _streamingGeneration++;
         }
 
         if (previous is not null)
         {
-            DisposeStreamingSink(previous);
+            ScheduleStreamingSinkCleanup(previous);
+            WaitForStreamingCleanupAsync().GetAwaiter().GetResult();
+        }
+
+        EncodedSink sink = EncodedSink.StartStreaming(_ffmpegPath, targetUrl);
+        try
+        {
+            lock (_sync)
+            {
+                ThrowIfDisposed();
+                _streamingSink = sink;
+                _streamHasReceivedMedia = false;
+                SetStreamingStatusUnsafe(CreateStreamingStatusUnsafe(
+                    StreamingPipelineState.Starting));
+            }
+        }
+        catch
+        {
+            CloseStreamingSink(sink);
+            throw;
         }
     }
 
-    public void StopStreaming()
+    public Task StopStreamingAsync()
     {
         EncodedSink? sink;
         lock (_sync)
@@ -326,13 +346,21 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
             sink = _streamingSink;
             _streamingSink = null;
             _streamHasReceivedMedia = false;
-            SetStreamingStatusUnsafe(new StreamingPipelineStatus(StreamingPipelineState.Idle));
+            _streamingGeneration++;
+            SetStreamingStatusUnsafe(CreateStreamingStatusUnsafe(StreamingPipelineState.Idle));
         }
 
         if (sink is not null)
         {
-            DisposeStreamingSink(sink);
+            return ScheduleStreamingSinkCleanup(sink);
         }
+
+        return WaitForStreamingCleanupAsync();
+    }
+
+    public void StopStreaming()
+    {
+        _ = StopStreamingAsync();
     }
 
     public void StopEncoderIfIdle()
@@ -376,7 +404,7 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
 
         if (streaming is not null)
         {
-            DisposeStreamingSink(streaming);
+            ScheduleStreamingSinkCleanup(streaming);
         }
 
         if (recording is not null)
@@ -395,6 +423,7 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
         }
 
         encoder?.Dispose();
+        WaitForStreamingCleanupAsync().GetAwaiter().GetResult();
     }
 
     private void OnEncodedChunk(byte[] data, DateTimeOffset receivedAt)
@@ -442,7 +471,7 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
                     failedStreaming = _streamingSink;
                     _streamingSink = null;
                     _streamHasReceivedMedia = false;
-                    SetStreamingStatusUnsafe(new StreamingPipelineStatus(
+                    SetStreamingStatusUnsafe(CreateStreamingStatusUnsafe(
                         StreamingPipelineState.Error,
                         "rtmps_publish_failed"));
                 }
@@ -450,13 +479,14 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
 
             if (notifyPublishing)
             {
-                SetStreamingStatusUnsafe(new StreamingPipelineStatus(StreamingPipelineState.Publishing));
+                SetStreamingStatusUnsafe(CreateStreamingStatusUnsafe(
+                    StreamingPipelineState.Publishing));
             }
         }
 
         if (failedStreaming is not null)
         {
-            DisposeStreamingSink(failedStreaming);
+            ScheduleStreamingSinkCleanup(failedStreaming);
         }
     }
 
@@ -473,14 +503,14 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
             failedStreaming = _streamingSink;
             _streamingSink = null;
             _streamHasReceivedMedia = false;
-            SetStreamingStatusUnsafe(new StreamingPipelineStatus(
+            SetStreamingStatusUnsafe(CreateStreamingStatusUnsafe(
                 StreamingPipelineState.Error,
                 "shared_encoder_failed"));
         }
 
         if (failedStreaming is not null)
         {
-            DisposeStreamingSink(failedStreaming);
+            ScheduleStreamingSinkCleanup(failedStreaming);
         }
     }
 
@@ -492,14 +522,14 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
             failedStreaming = _streamingSink;
             _streamingSink = null;
             _streamHasReceivedMedia = false;
-            SetStreamingStatusUnsafe(new StreamingPipelineStatus(
+            SetStreamingStatusUnsafe(CreateStreamingStatusUnsafe(
                 StreamingPipelineState.Error,
                 errorCode));
         }
 
         if (failedStreaming is not null)
         {
-            DisposeStreamingSink(failedStreaming);
+            ScheduleStreamingSinkCleanup(failedStreaming);
         }
     }
 
@@ -535,6 +565,16 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
         }
     }
 
+    private StreamingPipelineStatus CreateStreamingStatusUnsafe(
+        StreamingPipelineState state,
+        string? errorCode = null)
+    {
+        return new StreamingPipelineStatus(state, errorCode)
+        {
+            PublisherGeneration = _streamingGeneration
+        };
+    }
+
     private static string BuildRtmpTarget(string ingressUrl, string ingressStreamKey)
     {
         if (string.IsNullOrWhiteSpace(ingressUrl)
@@ -553,22 +593,60 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
         return $"{ingressUrl.Trim().TrimEnd('/')}/{Uri.EscapeDataString(ingressStreamKey.Trim())}";
     }
 
-    private static void DisposeStreamingSink(EncodedSink sink)
+    private static void CloseStreamingSink(EncodedSink sink)
     {
-        _ = Task.Run(() =>
+        try
         {
-            try
+            sink.Close(throwOnFailure: false);
+        }
+        catch
+        {
+        }
+        finally
+        {
+            sink.Dispose();
+        }
+    }
+
+    private Task ScheduleStreamingSinkCleanup(EncodedSink sink)
+    {
+        Task cleanup = Task.Run(() => CloseStreamingSink(sink));
+        lock (_sync)
+        {
+            _streamingCleanupTasks.Add(cleanup);
+        }
+
+        _ = cleanup.ContinueWith(
+            completedTask =>
             {
-                sink.Close(throwOnFailure: false);
-            }
-            catch
+                lock (_sync)
+                {
+                    _streamingCleanupTasks.Remove(completedTask);
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        return cleanup;
+    }
+
+    public async Task WaitForStreamingCleanupAsync()
+    {
+        while (true)
+        {
+            Task[] cleanupTasks;
+            lock (_sync)
             {
+                cleanupTasks = [.. _streamingCleanupTasks];
             }
-            finally
+
+            if (cleanupTasks.Length == 0)
             {
-                sink.Dispose();
+                return;
             }
-        });
+
+            await Task.WhenAll(cleanupTasks).ConfigureAwait(false);
+        }
     }
 
     private void ThrowIfDisposed()
@@ -939,6 +1017,11 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
                 {
                     TryKill();
                     RecordFailure(new TimeoutException("FFmpeg media sink did not stop in time."));
+                    if (!_writer.Wait(TimeSpan.FromSeconds(3)))
+                    {
+                        RecordFailure(new TimeoutException(
+                            "FFmpeg media sink writer did not stop after process termination."));
+                    }
                 }
             }
             finally

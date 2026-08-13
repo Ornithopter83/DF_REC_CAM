@@ -13,6 +13,7 @@
   let selectedRecording = null;
   let recordingsNextCursor = null;
   let liveAttemptId = 0;
+  let liveStartAbortController = null;
   let recordingsRequestId = 0;
 
   const elements = {
@@ -322,6 +323,8 @@
 
     await stopActiveLive();
     const attemptId = ++liveAttemptId;
+    const startAbortController = new AbortController();
+    liveStartAbortController = startAbortController;
     hideNotice();
     setBusy(startButton, true, "연결 준비 중…");
     setLiveStatus(status, "연결 준비 중", "connecting");
@@ -332,6 +335,7 @@
         config.mediaSessionBaseUrl,
         `cameras/${encodeURIComponent(camera.id)}/stream-session`,
         {},
+        { signal: startAbortController.signal },
       );
       if (!credentials.livekit_url || !credentials.participant_token) {
         throw new Error("실시간 연결 정보가 올바르지 않습니다.");
@@ -352,6 +356,8 @@
         startButton,
         stopButton,
         heartbeatTimer: null,
+        heartbeatAbortController: null,
+        leaseUntilMs: parseLeaseUntil(credentials.lease_until),
         stopped: false,
         videoTrack: null,
       };
@@ -379,7 +385,11 @@
         return;
       }
       resetLiveCard({ video, placeholder, status, startButton, stopButton }, "연결 실패", "error");
-      showNotice(error.message || "실시간 영상에 연결하지 못했습니다.", "error");
+      showNotice("실시간 영상에 연결하지 못했습니다. 잠시 후 다시 시도하세요.", "error");
+    } finally {
+      if (liveStartAbortController === startAbortController) {
+        liveStartAbortController = null;
+      }
     }
   }
 
@@ -419,6 +429,8 @@
       .on(livekit.RoomEvent.Disconnected, () => {
         if (activeLive !== live || live.stopped) return;
         clearTimeout(live.heartbeatTimer);
+        live.heartbeatAbortController?.abort();
+        live.heartbeatAbortController = null;
         live.stopped = true;
         activeLive = null;
         resetLiveCard(live, "연결 종료됨", "error");
@@ -430,27 +442,56 @@
     clearTimeout(live.heartbeatTimer);
     live.heartbeatTimer = window.setTimeout(async () => {
       if (activeLive !== live || live.stopped) return;
+      if (Date.now() >= live.leaseUntilMs) {
+        await stopLiveAfterLeaseFailure(live);
+        return;
+      }
+      const heartbeatAbortController = new AbortController();
+      live.heartbeatAbortController = heartbeatAbortController;
       try {
-        await mediaRequest(
+        const heartbeat = await mediaRequest(
           config.mediaSessionBaseUrl,
           `cameras/${encodeURIComponent(live.camera.id)}/stream-heartbeat`,
           {},
+          { signal: heartbeatAbortController.signal },
+        );
+        if (activeLive !== live || live.stopped) return;
+        live.leaseUntilMs = parseLeaseUntil(heartbeat.lease_until, live.leaseUntilMs);
+        setLiveStatus(
+          live.status,
+          live.videoTrack ? "실시간" : "카메라 송출 대기 중",
+          live.videoTrack ? "ready" : "connecting",
         );
       } catch (error) {
+        if (heartbeatAbortController.signal.aborted || activeLive !== live || live.stopped) return;
+        if (Date.now() >= live.leaseUntilMs) {
+          await stopLiveAfterLeaseFailure(live);
+          return;
+        }
+        setLiveStatus(live.status, "연결 유지 재시도 중", "connecting");
         showNotice(error.message || "실시간 보기 유지 요청에 실패했습니다.", "error");
       } finally {
-        if (activeLive === live && !live.stopped) scheduleLiveHeartbeat(live, 25_000);
+        if (live.heartbeatAbortController === heartbeatAbortController) {
+          live.heartbeatAbortController = null;
+        }
+        if (activeLive === live && !live.stopped) {
+          scheduleLiveHeartbeat(live, nextHeartbeatDelay(live));
+        }
       }
     }, delay);
   }
 
   async function stopActiveLive() {
     liveAttemptId += 1;
+    liveStartAbortController?.abort();
+    liveStartAbortController = null;
     const live = activeLive;
     if (!live) return;
     activeLive = null;
     live.stopped = true;
     clearTimeout(live.heartbeatTimer);
+    live.heartbeatAbortController?.abort();
+    live.heartbeatAbortController = null;
     live.videoTrack?.detach(live.video);
     await live.room.disconnect().catch(() => undefined);
     resetLiveCard(live, "중지됨", "neutral");
@@ -458,11 +499,40 @@
   }
 
   function stopLiveForPageExit() {
+    liveAttemptId += 1;
+    liveStartAbortController?.abort();
+    liveStartAbortController = null;
     if (!activeLive) return;
     activeLive.stopped = true;
     clearTimeout(activeLive.heartbeatTimer);
+    activeLive.heartbeatAbortController?.abort();
+    activeLive.heartbeatAbortController = null;
     activeLive.room.disconnect().catch(() => undefined);
     activeLive = null;
+  }
+
+  async function stopLiveAfterLeaseFailure(live) {
+    if (activeLive !== live || live.stopped) return;
+    liveAttemptId += 1;
+    activeLive = null;
+    live.stopped = true;
+    clearTimeout(live.heartbeatTimer);
+    live.heartbeatAbortController?.abort();
+    live.heartbeatAbortController = null;
+    live.videoTrack?.detach(live.video);
+    await live.room.disconnect().catch(() => undefined);
+    resetLiveCard(live, "연결 유지 실패", "error");
+    setConnection("관리자 로그인됨", "ready");
+    showNotice("실시간 보기 유지 시간이 만료되었습니다. 다시 연결하세요.", "error");
+  }
+
+  function parseLeaseUntil(value, fallback = Date.now() + 90_000) {
+    const parsed = Date.parse(value ?? "");
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function nextHeartbeatDelay(live) {
+    return Math.max(0, Math.min(25_000, live.leaseUntilMs - Date.now()));
   }
 
   function resetLiveCard(live, label, state) {
@@ -754,8 +824,9 @@
     return result;
   }
 
-  async function mediaRequest(baseUrl, path, body) {
+  async function mediaRequest(baseUrl, path, body, options = {}) {
     return await serviceRequest(baseUrl, path, {
+      ...options,
       method: "POST",
       body: JSON.stringify(body),
     });

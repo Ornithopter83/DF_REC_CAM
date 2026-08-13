@@ -2708,6 +2708,7 @@ public sealed partial class MainForm : KryptonForm
         _settings.DeviceRegistration.CameraId = result.CameraId;
         _settings.DeviceRegistration.NasRelativePath = result.NasRelativePath;
         _settingsManager.Save(_settings);
+        _deviceStreamCoordinator?.NotifyRegistrationChanged();
         WindowsDeviceRegistrationInfo? existingRegistration = _deviceRegistrationStore.Load();
         string registrationName = !string.IsNullOrWhiteSpace(result.RegistrationName)
             ? result.RegistrationName
@@ -2785,6 +2786,7 @@ public sealed partial class MainForm : KryptonForm
         _settings.DeviceRegistration.CameraId = "";
         _settings.DeviceRegistration.NasRelativePath = "";
         _settingsManager.Save(_settings);
+        _deviceStreamCoordinator?.NotifyRegistrationChanged();
     }
 
     private async Task AutoStartFullRecordingAsync(CancellationTokenSource cancellation)

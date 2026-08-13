@@ -698,6 +698,14 @@ public sealed class RecordingService : IDisposable
         }
     }
 
+    public Task WaitForLiveStreamingStopAsync()
+    {
+        lock (_sync)
+        {
+            return _sharedPipeline?.WaitForStreamingCleanupAsync() ?? Task.CompletedTask;
+        }
+    }
+
     public void SuspendLiveStreaming()
     {
         lock (_sync)

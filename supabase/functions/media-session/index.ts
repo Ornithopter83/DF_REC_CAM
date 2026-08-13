@@ -8,6 +8,9 @@ const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
 };
 
+const ingressReadyWaitAttempts = 20;
+const ingressReadyWaitMilliseconds = 250;
+
 type JsonObject = Record<string, unknown>;
 
 Deno.serve(async (request) => {
@@ -191,6 +194,11 @@ async function ensureIngress(
     p_camera_id: cameraId,
   });
   if (!singleBoolean(claimRows)) {
+    configuration = await waitForIngress(cameraId);
+    if (configuration?.ingress_id) return;
+    if (configuration?.state === "error") {
+      throw new RequestError("ingress_creation_failed", 502);
+    }
     throw new RequestError("ingress_preparing", 409);
   }
 
@@ -241,6 +249,28 @@ async function ensureIngress(
     }).catch(() => undefined);
     throw new RequestError("ingress_creation_failed", 502);
   }
+}
+
+async function waitForIngress(cameraId: string): Promise<JsonObject | null> {
+  for (let attempt = 0; attempt < ingressReadyWaitAttempts; attempt += 1) {
+    await delay(ingressReadyWaitMilliseconds);
+    const configuration = firstRow(
+      await adminRpc("get_camera_stream_configuration", {
+        p_camera_id: cameraId,
+      }),
+    );
+    if (configuration.ingress_id || configuration.state === "error") {
+      return configuration;
+    }
+    if (!configuration.ingress_creation_started_at) {
+      return configuration;
+    }
+  }
+  return null;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function liveKitConfiguration(): {
@@ -311,7 +341,8 @@ async function rpc(
     }
     if (
       databaseError.endsWith("_denied") ||
-      databaseError === "authentication_required"
+      databaseError === "authentication_required" ||
+      databaseError === "operation_not_authorized"
     ) {
       throw new RequestError("operation_not_authorized", 403);
     }
