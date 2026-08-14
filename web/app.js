@@ -65,7 +65,7 @@
   elements.approvalForm.addEventListener("submit", approveClaim);
   elements.rejectButton.addEventListener("click", rejectClaim);
   elements.signOutButton.addEventListener("click", signOut);
-  elements.refreshButton.addEventListener("click", loadPortal);
+  elements.refreshButton.addEventListener("click", refreshPortal);
   elements.recordingsRefreshButton.addEventListener("click", () => loadRecordings(selectedCamera));
   elements.recordingsMoreButton.addEventListener("click", loadMoreRecordings);
   elements.downloadRecordingButton.addEventListener("click", downloadSelectedRecording);
@@ -91,7 +91,8 @@
       await validateSession();
       if (!claimCode) {
         handleNasSsoReturn();
-        if (nasSsoResult !== "error" && await ensureNasSessions()) return;
+        const refreshNasScopes = nasSsoResult !== "ready";
+        if (nasSsoResult !== "error" && await ensureNasSessions(refreshNasScopes)) return;
       }
       await showSignedIn();
       if (pendingNasNotice) showNotice(pendingNasNotice, "error");
@@ -298,6 +299,16 @@
       showNotice(error.message, "error");
     } finally {
       setBusy(elements.refreshButton, false, "새로고침");
+    }
+  }
+
+  async function refreshPortal() {
+    hideNotice();
+    try {
+      if (await ensureNasSessions(true)) return;
+      await loadPortal();
+    } catch (error) {
+      showNotice(error.message || "NAS 다운로드 권한을 갱신하지 못했습니다.", "error");
     }
   }
 
