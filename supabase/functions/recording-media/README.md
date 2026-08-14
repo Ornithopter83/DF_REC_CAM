@@ -1,55 +1,36 @@
 # 녹화 미디어 API 계약
 
-기본 URL은 `{SUPABASE_URL}/functions/v1/recording-media`이다. 모든 요청은 프로젝트의
-publishable key를 `apikey` 헤더로 보낸다. 장치 경로는 DPAPI에 보관된 장치 토큰을,
-사용자 경로는 Supabase Auth access token을 `Authorization: Bearer ...`로 보낸다.
+기본 URL은 `{SUPABASE_URL}/functions/v1/recording-media/`이다. 모든 요청은 프로젝트 publishable key를 `apikey` 헤더로 보낸다. 장치 경로는 DPAPI에 보관된 장치 토큰을, 사용자 경로는 Supabase Auth access token을 `Authorization: Bearer`로 보낸다.
 
-대용량 MP4는 NAS에만 저장한다. 이 API는 파일을 업로드하거나 프록시하지 않으며 NAS
-식별자와 상대 경로로 구성된 카탈로그만 관리한다.
+대용량 MP4는 Supabase를 통과하지 않고 NAS HTTPS Gateway로 직접 전송한다. 이 함수는 권한 확인, 범위 제한 assertion과 카탈로그 메타데이터만 처리한다.
 
-## 장치: NAS 녹화 카탈로그 등록
+## 장치 경로
 
-`POST /devices/{device_id}/recordings/catalog`
+| HTTP | 역할 |
+| --- | --- |
+| `POST devices/{device_id}/nas-upload-session` | 등록 장치·카메라·NAS 위치를 확인하고 1시간 업로드 assertion 발급 |
+| `POST devices/{device_id}/recordings/catalog` | NAS 확정 MP4의 메타데이터를 SHA-256 멱등 키로 등록 |
 
-```json
-{
-  "camera_id": "uuid",
-  "nas_relative_path": "DFBlackbox/MyCompany/Camera1/recordings/2026/08/12/recording.mp4",
-  "original_file_name": "recording.mp4",
-  "file_size_bytes": 123456789,
-  "source_fingerprint": "lowercase-sha256-hex",
-  "recorded_at": "2026-08-12T12:34:56Z",
-  "duration_seconds": 600.25,
-  "source_last_modified_at": "2026-08-12T12:45:00Z"
-}
-```
+NAS 세션 응답에는 HTTPS Gateway 기준 URL, `provision.php`, `upload.php`, 카메라 NAS 상대 경로, 4MiB 조각 크기와 assertion이 포함된다. 장치 토큰은 NAS에 전달하지 않는다.
 
-경로는 등록된 카메라의 NAS 상대 경로 아래 `recordings/`에 있어야 한다. 같은
-장치·카메라·SHA-256 요청은 멱등이며 응답은 다음과 같다.
+카탈로그 경로는 등록된 카메라 루트 아래 `recordings/*.mp4`여야 한다. 같은 장치·카메라·SHA-256 요청은 동일 항목을 갱신하는 멱등 동작이다.
 
-```json
-{
-  "recording_id": "uuid",
-  "catalog_state": "ready"
-}
-```
+## 사용자 경로
 
-## 사용자: 목록과 NAS 다운로드
+| HTTP | 역할 |
+| --- | --- |
+| `GET portal/cameras` | 조직 권한 내 카메라, 장치 온라인 상태와 NAS 상태 조회 |
+| `POST nas-session` | 조직별 NAS 다운로드 범위를 RS256 assertion으로 발급 |
+| `GET cameras/{camera_id}/recordings` | `ready` NAS 녹화 카탈로그를 cursor 기반 최신순 조회 |
+| `POST recordings/{recording_id}/download-url` | 권한 확인 후 NAS `download.php` HTTPS 주소 반환 |
 
-- `GET /cameras/{camera_id}/recordings?limit=50&cursor={opaque}`
-- `POST /recordings/{recording_id}/download-url`
+웹은 `nas-session` assertion을 NAS `auth.php`에 POST해 8시간 HttpOnly 세션으로 교환한다. 다운로드 URL에는 녹화 ID, NAS 위치 ID와 상대 경로만 포함되며 NAS 계정·비밀번호·서명값은 포함하지 않는다.
 
-목록은 로그인 사용자가 속한 조직의 NAS 카탈로그 항목만 최신순으로 반환한다.
-다운로드 API는 권한 확인 후 HTTPS NAS `list` 주소를 반환한다.
+## 제공하지 않는 기능
 
-```json
-{
-  "download_url": "https://nas.example/list/HDD1/share/path/recording.mp4",
-  "file_name": "recording.mp4",
-  "authentication_required": true
-}
-```
+- Supabase Storage 업로드와 TUS 세션
+- 녹화본 signed URL 재생
+- 대용량 파일 프록시
+- NAS 디렉터리 목록·삭제
 
-웹은 NAS 계정이나 비밀번호를 저장하지 않는다. 사용자가 NAS 최상위 탭에서 로그인한
-브라우저 세션으로 다운로드하며, 인증되지 않은 요청은 NAS 로그인 HTML을 반환할 수 있다.
-웹 재생 URL과 Supabase Storage signed URL은 제공하지 않는다.
+웹 내 영상 재생은 `media-session`의 LiveKit 실시간 스트리밍만 사용한다.

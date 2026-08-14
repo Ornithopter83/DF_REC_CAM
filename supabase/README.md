@@ -1,74 +1,59 @@
-# DFBlackbox Supabase 등록 백엔드
+# DFBlackbox Supabase 백엔드
 
-이 디렉터리는 QR 승인 기반 기기 등록에 필요한 데이터베이스 마이그레이션을 관리한다. 원격 프로젝트에는 아직 적용하지 않았다.
+이 디렉터리는 QR 기기 등록, 조직 권한, LiveKit 시청 lease, NAS 위치와 녹화 카탈로그에 필요한 PostgreSQL 마이그레이션과 Edge Function 설정을 관리한다. 원격 프로젝트에는 마이그레이션 001~015가 적용되어 있다.
 
-## 구성
+## 마이그레이션 구성
 
-`migrations/202608120001_device_registration.sql`은 다음 객체를 만든다.
-
-| 객체 | 역할 |
+| 범위 | 역할 |
 | --- | --- |
-| `organizations` | 장치와 사용자가 속한 조직 |
-| `organization_members` | Supabase Auth 사용자와 조직 역할(`owner/admin/viewer`) |
-| `sites` | 조직 내 설치 장소 |
-| `devices` | DFBlackbox 설치 단위, 장치 토큰 해시와 등록/저장소 상태 |
-| `cameras` | 장치에 속한 카메라. 현재 앱은 장치당 첫 카메라 하나를 사용 |
-| `device_claims` | 5분짜리 일회용 등록 요청. 등록코드는 SHA-256 해시만 저장 |
-| `device_provisioning_reports` | NAS 준비 결과 이력 |
+| 001~005 | 조직·사이트·장치·카메라·등록 요청, 승인명, 등록 해제와 요청 조회 |
+| 006~008 | LiveKit Ingress 구성, 시청 lease, 장치 명령·송출 상태와 수명주기 보호 |
+| 009~010 | NAS 위치, 카메라 NAS 경로, 녹화 카탈로그와 장치 인증 계약 |
+| 011 | 웹 NAS SSO 범위, 장치 공인 IP·heartbeat와 포털 조회 |
+| 012 | 장치별 NAS HTTPS 업로드 범위 조회 |
+| 013 | 신규 카메라 표시명과 NAS 경로를 등록 PC명으로 생성 |
+| 014 | NAS 준비 전 `approved` 장치의 범위 제한 세션 발급 허용 |
+| 015 | 신규 NAS 카메라 폴더에서 등록 PC명의 내부 공백 보존 |
 
-모든 공개 테이블은 RLS를 활성화한다. 로그인한 사용자는 자신이 활성 멤버인 조직의 조직·장소·장치·카메라·프로비저닝 결과만 조회할 수 있다. `anon` 역할에는 테이블 권한을 부여하지 않는다. 등록 요청 생성과 상태 소비 및 프로비저닝 보고 함수는 `service_role`만 실행할 수 있다.
+모든 공개 테이블은 RLS를 사용한다. 로그인 사용자는 자신이 활성 멤버인 조직 범위만 조회하며 장치용 원자적 RPC는 service-role 전용이다. 등록코드와 장치 토큰 평문은 DB에 저장하지 않고 SHA-256 해시만 보관한다.
 
-## 원자적 함수
+## Edge Function
 
-| 함수 | 호출 주체 | 동작 |
-| --- | --- | --- |
-| `create_device_claim` | Edge Function | 등록코드 해시와 만료시각 저장 |
-| `approve_device_claim` | 로그인한 `owner/admin` | 장치·카메라를 멱등 생성하고 NAS 상대 경로 확정 |
-| `reject_device_claim` | 로그인한 `owner/admin` | 대기 중 요청 거절 |
-| `consume_device_claim` | Edge Function | 상태 조회 및 최초 한 번만 장치 토큰 발급 |
-| `report_device_provisioning` | Edge Function | 장치 토큰 검증 후 `ready/storage_error` 반영 |
-
-장치 토큰 평문은 테이블에 저장하지 않는다. 최초 승인 결과를 소비할 때 256비트 토큰을 생성하고 `devices.token_hash`에 SHA-256 해시만 저장한다. 동일 설치가 다시 등록되더라도 기존 토큰을 임의로 교체하지 않는다.
-
-## 필요한 Edge Function 경계
-
-DFBlackbox의 등록 API 기본 URL은 다음 단일 Edge Function을 기준으로 한다.
-
-```text
-https://ujttgkmwqdwxevnbblvb.supabase.co/functions/v1/device-registration/
-```
-
-Edge Function은 아래 경로를 라우팅해야 한다.
-
-| HTTP | 내부 처리 |
+| 함수 | 역할 |
 | --- | --- |
-| `POST device-claims` | 안전한 8자리 코드를 생성하고 `create_device_claim` 호출 |
-| `GET device-claims/{claim_id}/status` | `consume_device_claim` 호출 |
-| `POST device-claims/{claim_code}/approve` | 사용자 JWT로 `approve_device_claim` 호출 |
-| `POST devices/{device_id}/provisioning-result` | Bearer 장치 토큰으로 `report_device_provisioning` 호출 |
+| `device-registration` | 등록 요청 생성·조회, 관리자 승인·거절, NAS 준비 결과 보고, 등록 해제 |
+| `media-session` | LiveKit 시청 lease·참가 토큰, 장치 송출 명령·상태 보고 |
+| `recording-media` | 포털 카메라·녹화 목록, NAS SSO assertion, 장치 NAS 세션·카탈로그 등록, 다운로드 URL |
 
-새 형식의 publishable key는 JWT가 아니므로 DFBlackbox는 `apikey` 헤더로 전송한다. 공개 장치 요청을 받는 Edge Function은 `verify_jwt = false`로 배포하고, 함수 내부에서 허용된 publishable key인지 검증하며 등록 생성 요청에 속도 제한을 적용해야 한다. 승인 경로는 별도로 사용자 JWT를 검증해야 한다.
+`supabase/config.toml`은 세 함수 모두 `verify_jwt = false`로 배포한다. 각 함수가 공개 publishable key, 사용자 JWT 또는 장치 토큰을 경로별로 직접 검증한다.
 
-승인 URL을 만들기 위한 `APPROVAL_BASE_URL`은 아직 확정되지 않았다. Edge Function 환경 변수로 설정하고 저장소에 직접 기록하지 않는다. Secret/service-role 키도 Edge Function 환경에서만 사용한다.
+## 비밀값과 환경 변수
 
-## 초기 데이터
+값 자체는 저장소에 기록하지 않는다.
 
-마이그레이션은 조직이나 관리자 계정을 임의로 만들지 않는다. Supabase Auth 사용자가 준비된 후 신뢰된 관리 경로에서 다음 순서로 초기 데이터를 넣어야 한다.
+- 공통: `SUPABASE_URL`, publishable key 목록, Supabase secret key
+- 등록: `APPROVAL_BASE_URL`, `APPROVAL_ALLOWED_ORIGIN`
+- LiveKit: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`
+- NAS SSO·업로드 서명: `NAS_SESSION_PRIVATE_KEY`
 
-1. `organizations`에 조직 생성
-2. `organization_members`에 해당 Auth 사용자 ID를 `owner`로 연결
-3. `sites`에 설치 장소 생성
+opaque `sb_secret_` 형식의 Supabase 관리자 키는 REST RPC의 `apikey` 헤더로만 전송한다. 사용자 JWT만 `Authorization: Bearer`에 넣는다.
 
-이 초기 작업을 브라우저의 publishable key로 직접 허용하지 않는다.
+## 데이터 정책
 
-## 적용 전 확인
+- 모든 대용량 MP4는 NAS에만 저장한다.
+- DB에는 NAS 식별자, 상대 경로, 파일명, 크기, 녹화시각, SHA-256 멱등 식별자 등 메타데이터만 저장한다.
+- 기존 비공개 Storage 버킷과 레거시 열은 이미 배포된 호환 상태이지만 새 녹화 업로드에는 사용하지 않는다.
+- 기존 Storage 객체는 별도 승인 없이 삭제하지 않는다.
 
-원격 적용은 DB 스키마를 변경하므로 별도 승인과 프로젝트 인증이 필요하다. 적용 전 원격 마이그레이션 이력을 먼저 확인하고, SQL Editor에서 직접 수정하지 말고 마이그레이션으로 적용한다.
+## 적용과 검증
 
 ```powershell
-supabase link --project-ref ujttgkmwqdwxevnbblvb
 supabase migration list
+supabase db push --dry-run
 supabase db push
+supabase functions deploy device-registration
+supabase functions deploy media-session
+supabase functions deploy recording-media
 ```
 
-로컬 Supabase 환경이 준비된 경우 먼저 `supabase db reset --local`로 마이그레이션을 검증한다. 실제 키와 DB 비밀번호는 `.env`나 문서에 커밋하지 않는다.
+원격 스키마 변경 전 적용 대상과 영향을 먼저 보고하고 SQL Editor 직접 수정 대신 마이그레이션 파일을 사용한다. 프로젝트 참조, DB 비밀번호와 실제 비밀값은 문서나 커밋에 포함하지 않는다.

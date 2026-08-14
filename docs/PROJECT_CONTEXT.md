@@ -25,8 +25,9 @@ DFBlackbox는 .NET 8 Windows Forms 기반 블랙박스/감시 녹화 애플리�
 
 ### 설정 저장/로드
 
-- 앱 설정은 `settings.json`으로 관리되는 것으로 보인다.
-- 설정 파일의 구체 스키마와 하위 호환 정책은 확인 필요.
+- 앱 설정은 실행 파일 옆 `settings.json`에 저장하며 누락 필드는 모델 기본값으로 하위 호환한다.
+- 로컬 녹화는 실행 파일 옆 `REC`, 로그는 `Logs`, 카메라 프로필과 기준 데이터 기본 루트는 `%PROGRAMDATA%\DFBlackboxData`다.
+- 장치 토큰은 별도 DPAPI 암호화 저장소를 사용하고 비민감 등록 정보만 `HKCU\Software\DFBlackbox\DeviceRegistration`에 기록한다.
 - 기존 설정 형식은 임의로 변경하지 않는다.
 
 ### UI
@@ -68,3 +69,4 @@ DFBlackbox는 .NET 8 Windows Forms 기반 블랙박스/감시 녹화 애플리�
 - 포털은 로그인 및 전체 새로고침 때 카메라별 녹화 카탈로그를 한 번 조회하고, 장치 명령 폴링이 기록한 공인 IP·최근 heartbeat로 온라인 상태를 주기 갱신한다.
 - `ffmpeg.exe`는 용량이 커서 Git 추적 대상이 아니다.
 - 게시 확인 명령은 `dotnet publish DFBlackbox\DFBlackbox.csproj -c Release -o .publishcheck`이다.
+- 현재 `Program.cs`는 `recordingOnlyMode = true`로 실행해 녹화·재생 중심 UI를 기본 사용한다.
