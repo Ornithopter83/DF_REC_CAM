@@ -423,7 +423,7 @@ public sealed partial class MainForm : KryptonForm
             _settings,
             deviceTokenStore,
             recordingMediaClient,
-            Path.Combine(_paths.Root, "cloud-sync", "recording-upload-state.json"));
+            Path.Combine(_paths.Root, "catalog-sync", "recording-catalog-state.json"));
         _recordingCloudSyncService.StatusChanged += OnRecordingCloudSyncStatusChanged;
         _recordingCloudSyncService.Start();
         StartCleanupSchedule();
@@ -2415,11 +2415,11 @@ public sealed partial class MainForm : KryptonForm
     {
         if (status.IsReady)
         {
-            _logger.Info($"Cloud recording sync completed. File={status.FileName}");
+            _logger.Info($"NAS recording catalog sync completed. File={status.FileName}");
             return;
         }
 
-        _logger.Info($"Cloud recording sync deferred. File={status.FileName}, Error={status.ErrorCode ?? "unknown"}");
+        _logger.Info($"NAS recording catalog sync deferred. File={status.FileName}, Error={status.ErrorCode ?? "unknown"}");
     }
 
     private bool CanStartRecordingOnDisk(DateTime now, string triggerReason)

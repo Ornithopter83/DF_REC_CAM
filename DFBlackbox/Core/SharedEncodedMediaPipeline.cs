@@ -787,20 +787,34 @@ internal sealed class SharedEncodedMediaPipeline : IDisposable
             _disposed = true;
             _stopping = true;
             _frames.CompleteAdding();
+            bool workersStopped = false;
             try
             {
-                Task.WaitAll([_frameWriter, _encodedReader], TimeSpan.FromSeconds(12));
+                workersStopped = Task.WaitAll(
+                    [_frameWriter, _encodedReader],
+                    TimeSpan.FromSeconds(12));
             }
             catch
             {
             }
 
-            if (!_process.HasExited)
+            if (!workersStopped && !_process.HasExited)
             {
                 try
                 {
                     _process.Kill(entireProcessTree: true);
                     _process.WaitForExit(3000);
+                }
+                catch
+                {
+                }
+            }
+
+            if (!workersStopped)
+            {
+                try
+                {
+                    Task.WaitAll([_frameWriter, _encodedReader], TimeSpan.FromSeconds(3));
                 }
                 catch
                 {

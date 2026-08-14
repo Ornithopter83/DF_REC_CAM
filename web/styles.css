@@ -138,7 +138,6 @@ input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgb
 .recordings-more:hover { background: #edf6ff; }
 .media-message { padding: 46px 24px; color: var(--ink-soft); text-align: center; }
 .recording-player { display: flex; min-width: 0; flex-direction: column; background: #07192a; }
-.recording-player > video { width: 100%; min-height: 360px; max-height: 520px; flex: 1; object-fit: contain; background: #000; }
 .recording-player-empty { display: grid; min-height: 360px; flex: 1; place-items: center; align-content: center; gap: 14px; padding: 36px; color: #bcccdc; text-align: center; }
 .recording-player-empty strong { color: #fff; font-size: 18px; }
 .recording-player-empty span:last-child { max-width: 390px; font-size: 13px; line-height: 1.6; }
@@ -174,5 +173,5 @@ footer { display: flex; justify-content: space-between; gap: 20px; padding: 25px
   .section-heading { align-items: flex-start; gap: 14px; flex-direction: column; }
   .recordings-heading, .recording-player-footer { align-items: stretch; flex-direction: column; }
   .recordings-heading .button, .recording-player-footer .button { width: 100%; }
-  .recording-player > video, .recording-player-empty { min-height: 260px; }
+  .recording-player-empty { min-height: 260px; }
 }

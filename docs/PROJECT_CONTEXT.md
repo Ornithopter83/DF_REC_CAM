@@ -41,8 +41,9 @@ DFBlackbox는 .NET 8 Windows Forms 기반 블랙박스/감시 녹화 애플리�
 ### DB
 
 - Supabase PostgreSQL을 기기 등록, 조직·장치·카메라 권한, 실시간 시청 lease, 녹화 카탈로그에 사용한다.
-- `supabase/migrations`의 001~007이 원격 프로젝트에 적용되어 있다.
-- 녹화 웹 제공용 복사본은 비공개 `dfblackbox-recordings` Storage 버킷에 두고, NAS를 원본 보관 경계로 유지한다.
+- `supabase/migrations`의 001~010이 원격 프로젝트에 적용되어 있다.
+- 모든 대용량 녹화 파일은 NAS에만 저장하고, DB에는 NAS 식별자·상대 경로·파일명·크기·녹화 시각 등 카탈로그 메타데이터만 저장한다.
+- 기존 비공개 `dfblackbox-recordings` Storage와 관련 스키마는 배포된 레거시 상태이며, 새 녹화 파일을 업로드하는 경로로 사용하지 않는다. 기존 객체 삭제는 별도 승인 없이 수행하지 않는다.
 - DB 스키마 변경은 요청 없이는 하지 않는다.
 
 ### API 연동
@@ -50,7 +51,9 @@ DFBlackbox는 .NET 8 Windows Forms 기반 블랙박스/감시 녹화 애플리�
 - ONVIF/SOAP 호출이 있다.
 - Supabase Edge Function `device-registration`, `media-session`, `recording-media`를 사용한다.
 - 실시간 영상은 LiveKit Cloud RTMPS Ingress로 송출하고 웹에서 WebRTC로 구독한다.
-- 녹화 복사본은 장치가 6 MiB TUS 이어올리기로 Storage에 동기화하며, 재생·다운로드는 단기 signed URL을 사용한다.
+- 웹 영상 재생은 PC가 온라인일 때의 LiveKit 실시간 스트리밍만 제공한다.
+- 녹화본은 웹 내 재생하지 않고, 권한이 확인된 사용자에게 NAS 다운로드 경로만 제공한다. 데스크톱은 파일 바이트를 업로드하지 않고 NAS 카탈로그 메타데이터만 등록한다.
+- NAS1dual URL 서비스에는 `dfblackbox-nas.duckdns.org` Let's Encrypt 인증서와 HTTPS가 적용되어 Range 요청을 지원한다. CORS·MIME·브라우저 세션 제약 때문에 녹화본의 웹 플레이어 소스로 사용하지 않고 로그인 필요 `list` 다운로드만 새 탭으로 연다.
 - 인증 정보와 전체 RTSP URL은 로그에 남기지 않는다.
 
 ### 배포/운영

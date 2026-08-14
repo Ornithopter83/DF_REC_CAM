@@ -50,7 +50,6 @@
     recordingsList: document.querySelector("#recordingsList"),
     recordingsMoreButton: document.querySelector("#recordingsMoreButton"),
     recordingPlayerEmpty: document.querySelector("#recordingPlayerEmpty"),
-    recordingVideo: document.querySelector("#recordingVideo"),
     selectedRecordingName: document.querySelector("#selectedRecordingName"),
     selectedRecordingMeta: document.querySelector("#selectedRecordingMeta"),
     downloadRecordingButton: document.querySelector("#downloadRecordingButton"),
@@ -556,8 +555,8 @@
   async function openRecordings(camera) {
     selectedCamera = camera;
     elements.recordingsPanel.hidden = false;
-    elements.recordingsTitle.textContent = `${camera.display_name} 녹화영상`;
-    elements.recordingsDescription.textContent = "NAS에서 안전하게 동기화가 끝난 영상만 표시됩니다.";
+    elements.recordingsTitle.textContent = `${camera.display_name} 녹화 다운로드`;
+    elements.recordingsDescription.textContent = "PC가 오프라인이어도 NAS가 접속 가능하면 등록된 녹화 파일을 다운로드할 수 있습니다.";
     elements.recordingsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
     await loadRecordings(camera);
   }
@@ -632,7 +631,7 @@
       name.textContent = recording.original_file_name || "녹화영상.mp4";
       const state = document.createElement("span");
       state.className = "recording-item-state";
-      state.textContent = "재생 가능";
+      state.textContent = "다운로드";
       const meta = document.createElement("span");
       meta.className = "recording-item-meta";
       meta.textContent = recordingMeta(recording);
@@ -642,40 +641,16 @@
     }
   }
 
-  async function selectRecording(recording) {
+  function selectRecording(recording) {
     selectedRecording = recording;
     for (const item of elements.recordingsList.querySelectorAll(".recording-item")) {
       item.setAttribute("aria-current", item.dataset.recordingId === recording.id ? "true" : "false");
     }
-    elements.recordingVideo.pause();
-    elements.recordingVideo.removeAttribute("src");
-    elements.recordingVideo.load();
-    elements.recordingVideo.hidden = true;
     elements.recordingPlayerEmpty.hidden = false;
-    elements.recordingPlayerEmpty.querySelector("strong").textContent = "재생 주소 준비 중…";
+    elements.recordingPlayerEmpty.querySelector("strong").textContent = "다운로드 준비됨";
     elements.selectedRecordingName.textContent = recording.original_file_name || "녹화영상.mp4";
     elements.selectedRecordingMeta.textContent = recordingMeta(recording);
-    elements.downloadRecordingButton.disabled = true;
-
-    try {
-      const result = await serviceRequest(
-        config.recordingMediaBaseUrl,
-        `recordings/${encodeURIComponent(recording.id)}/play-url`,
-        { method: "POST" },
-      );
-      if (selectedRecording?.id !== recording.id) return;
-      if (!result.signed_url) throw new Error("재생 주소가 올바르지 않습니다.");
-
-      elements.recordingVideo.src = result.signed_url;
-      elements.recordingVideo.hidden = false;
-      elements.recordingPlayerEmpty.hidden = true;
-      elements.downloadRecordingButton.disabled = false;
-      elements.recordingVideo.play().catch(() => undefined);
-    } catch (error) {
-      if (selectedRecording?.id !== recording.id) return;
-      elements.recordingPlayerEmpty.querySelector("strong").textContent = "영상을 재생할 수 없습니다.";
-      showNotice(error.message || "녹화영상 재생 주소를 만들지 못했습니다.", "error");
-    }
+    elements.downloadRecordingButton.disabled = false;
   }
 
   async function downloadSelectedRecording() {
@@ -689,15 +664,18 @@
         { method: "POST" },
       );
       if (selectedRecording?.id !== recording.id) return;
-      if (!result.signed_url) throw new Error("다운로드 주소가 올바르지 않습니다.");
+      const downloadUrl = requireNasDownloadUrl(result.download_url);
 
       const anchor = document.createElement("a");
-      anchor.href = result.signed_url;
-      anchor.download = result.file_name || recording.original_file_name || "DFBlackbox-recording.mp4";
+      anchor.href = downloadUrl;
+      anchor.target = "_blank";
       anchor.rel = "noopener";
       document.body.append(anchor);
       anchor.click();
       anchor.remove();
+      if (result.authentication_required) {
+        showNotice("NAS 로그인 화면이 열리면 다운로드 전용 계정으로 인증하세요.", "success");
+      }
     } catch (error) {
       showNotice(error.message || "녹화영상 다운로드를 준비하지 못했습니다.", "error");
     } finally {
@@ -719,12 +697,8 @@
 
   function clearRecordingPlayer() {
     selectedRecording = null;
-    elements.recordingVideo.pause();
-    elements.recordingVideo.removeAttribute("src");
-    elements.recordingVideo.load();
-    elements.recordingVideo.hidden = true;
     elements.recordingPlayerEmpty.hidden = false;
-    elements.recordingPlayerEmpty.querySelector("strong").textContent = "재생할 영상을 선택하세요.";
+    elements.recordingPlayerEmpty.querySelector("strong").textContent = "다운로드할 영상을 선택하세요.";
     elements.selectedRecordingName.textContent = "선택된 영상 없음";
     elements.selectedRecordingMeta.textContent = "";
     elements.downloadRecordingButton.disabled = true;
@@ -737,6 +711,19 @@
       formatDuration(recording.duration_seconds),
       formatBytes(recording.file_size_bytes),
     ].filter(Boolean).join(" · ");
+  }
+
+  function requireNasDownloadUrl(value) {
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error("다운로드 주소가 올바르지 않습니다.");
+    }
+    if (url.protocol !== "https:" || url.username || url.password) {
+      throw new Error("다운로드 주소가 올바르지 않습니다.");
+    }
+    return url.href;
   }
 
   function formatDateTime(value) {
@@ -918,9 +905,8 @@
       ingress_preparing: "실시간 송출을 준비하고 있습니다. 잠시 후 다시 시도하세요.",
       ingress_creation_failed: "실시간 송출 채널을 만들지 못했습니다.",
       livekit_not_configured: "실시간 서버 설정이 완료되지 않았습니다.",
-      storage_not_configured: "녹화영상 저장소 설정이 완료되지 않았습니다.",
-      signed_url_failed: "보안 재생 주소를 만들지 못했습니다.",
-      media_url_failed: "보안 재생 주소를 만들지 못했습니다.",
+      nas_location_not_configured: "NAS 다운로드 위치 설정이 완료되지 않았습니다.",
+      invalid_nas_location: "NAS 다운로드 주소 설정이 올바르지 않습니다.",
       invalid_cursor: "녹화영상 목록 위치가 만료됐습니다. 목록을 새로고침하세요.",
       server_not_configured: "미디어 서버 설정이 완료되지 않았습니다.",
       internal_error: "서버가 요청을 처리하지 못했습니다.",

@@ -237,7 +237,6 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
             }
 
             string fingerprint;
-            Uri? resumeLocation = null;
             string? existingRecordingId = null;
             if (existing is not null
                 && existing.FileSizeBytes == fileLength
@@ -246,10 +245,6 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
             {
                 fingerprint = existing.SourceFingerprint;
                 existingRecordingId = existing.RecordingId;
-                if (Uri.TryCreate(existing.UploadLocation, UriKind.Absolute, out Uri? parsed))
-                {
-                    resumeLocation = parsed;
-                }
             }
             else
             {
@@ -261,19 +256,21 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
                 writeTicks,
                 fingerprint,
                 existingRecordingId,
-                resumeLocation?.AbsoluteUri,
                 "pending");
             _states[stateKey] = pendingState;
             await SaveStateAsync(cancellationToken);
 
             DateTimeOffset lastModified = new(before.LastWriteTimeUtc, TimeSpan.Zero);
             DateTimeOffset recordedAt = TryParseRecordedAt(before.Name, lastModified);
-            BeginRecordingUploadResponse session = await _client.BeginUploadAsync(
+            string nasRelativePath = BuildNasRecordingPath(
+                _settings.DeviceRegistration.NasRelativePath,
+                relativePath);
+            RegisterRecordingCatalogResponse catalog = await _client.RegisterCatalogAsync(
                 deviceId,
                 deviceToken,
-                new BeginRecordingUploadRequest(
+                new RegisterRecordingCatalogRequest(
                     cameraId,
-                    relativePath,
+                    nasRelativePath,
                     before.Name,
                     fileLength,
                     fingerprint,
@@ -281,56 +278,12 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
                     null,
                     lastModified),
                 cancellationToken);
-
-            if (!session.UploadRequired
-                && string.Equals(session.SyncState, "ready", StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(catalog.CatalogState, "ready", StringComparison.OrdinalIgnoreCase))
             {
-                await MarkReadyAsync(stateKey, pendingState, session.RecordingId, cancellationToken);
-                StatusChanged?.Invoke(new RecordingCloudSyncStatus(before.Name, true));
-                return;
+                throw new InvalidDataException("The recording server did not confirm the NAS catalog entry.");
             }
 
-            TusUploadDescriptor upload = session.Tus
-                ?? throw new InvalidDataException("The recording server did not return upload details.");
-            if (!string.Equals(session.RecordingId, existingRecordingId, StringComparison.Ordinal))
-            {
-                resumeLocation = null;
-            }
-
-            pendingState = pendingState with
-            {
-                RecordingId = session.RecordingId,
-                UploadLocation = resumeLocation?.AbsoluteUri,
-                SyncState = "uploading"
-            };
-            _states[stateKey] = pendingState;
-            await SaveStateAsync(cancellationToken);
-
-            Uri location = await _client.UploadFileAsync(
-                upload,
-                filePath,
-                resumeLocation,
-                async createdLocation =>
-                {
-                    pendingState = pendingState with { UploadLocation = createdLocation.AbsoluteUri };
-                    _states[stateKey] = pendingState;
-                    await SaveStateAsync(cancellationToken);
-                },
-                cancellationToken);
-            pendingState = pendingState with { UploadLocation = location.AbsoluteUri };
-
-            CompleteRecordingUploadResponse completed = await _client.CompleteUploadAsync(
-                deviceId,
-                deviceToken,
-                session.RecordingId,
-                new CompleteRecordingUploadRequest(fileLength, fingerprint),
-                cancellationToken);
-            if (!string.Equals(completed.SyncState, "ready", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidDataException("The recording server did not confirm the uploaded file.");
-            }
-
-            await MarkReadyAsync(stateKey, pendingState, session.RecordingId, cancellationToken);
+            await MarkReadyAsync(stateKey, pendingState, catalog.RecordingId, cancellationToken);
             StatusChanged?.Invoke(new RecordingCloudSyncStatus(before.Name, true));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -352,7 +305,6 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
         _states[stateKey] = state with
         {
             RecordingId = recordingId,
-            UploadLocation = null,
             SyncState = "ready"
         };
         await SaveStateAsync(cancellationToken);
@@ -427,6 +379,23 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
         && !path.EndsWith(".crashed.mp4", StringComparison.OrdinalIgnoreCase)
         && !path.EndsWith(".uploading.mp4", StringComparison.OrdinalIgnoreCase);
 
+    private static string BuildNasRecordingPath(string cameraRelativePath, string recordingRelativePath)
+    {
+        string cameraPath = cameraRelativePath.Replace('\\', '/').Trim('/');
+        string recordingPath = recordingRelativePath.Replace('\\', '/').Trim('/');
+        if (string.IsNullOrWhiteSpace(cameraPath)
+            || string.IsNullOrWhiteSpace(recordingPath)
+            || cameraPath.Split('/').Any(segment => segment is "" or "." or "..")
+            || recordingPath.Split('/').Any(segment => segment is "" or "." or "..")
+            || cameraPath.Contains(':')
+            || recordingPath.Contains(':'))
+        {
+            throw new InvalidDataException("The NAS recording path is invalid.");
+        }
+
+        return $"{cameraPath}/recordings/{recordingPath}";
+    }
+
     private static DateTimeOffset TryParseRecordedAt(
         string fileName,
         DateTimeOffset fallback)
@@ -461,6 +430,5 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
         long LastWriteTimeUtcTicks,
         string SourceFingerprint,
         string? RecordingId,
-        string? UploadLocation,
         string SyncState);
 }

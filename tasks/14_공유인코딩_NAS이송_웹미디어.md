@@ -147,3 +147,5 @@ NAS:  {nas_root}/{nas_relative_path}/recordings/{yyyy}/{MM}/{dd}/{timestamp}.mp4
 * 2026-08-13 세션 수명주기 보완 후 Release 빌드와 self-contained 단일 파일 게시를 다시 통과했고, 번들 FFmpeg의 `libx264`·RTMP·RTMPS 지원과 웹·Edge·마이그레이션 정적 계약을 확인했다.
 * 현재 PC에는 PnP 카메라가 없어 실제 WebRTC 종단 간 송출과 녹화 동시성 검증은 수행하지 못했다. 신규 008을 원격 적용해 마이그레이션 001~008 이력을 일치시키고 `media-session`을 재배포했으며, 장치 명령 조회와 상태 보고 모두 잘못된 장치 토큰에 401을 반환함을 확인했다.
 * `스트리밍` 브랜치 푸시 후 GitHub Pages 배포 워크플로가 성공해 웹 포털 변경 배포를 확인했다.
+* 2026-08-14 정책 전환으로 대용량 녹화의 Supabase Storage/TUS 경로와 웹 녹화 재생을 폐기했다. 데스크톱은 NAS 파일 메타데이터만 등록하고 웹은 로그인 필요 NAS HTTPS 다운로드만 제공한다.
+* 009·010 마이그레이션으로 조직별 NAS 위치·카메라 NAS 루트·녹화 상대 경로를 DB에 유지하며 기존 Storage 객체와 레거시 행은 삭제하지 않았다.
