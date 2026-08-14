@@ -1,0 +1,21 @@
+# DFBlackbox NAS Gateway
+
+NAS1DUAL의 Apache/PHP 7.3 환경에서 Supabase 웹 로그인 사용자를 NAS 세션으로
+교환하고, 허용된 녹화 MP4만 attachment·Range 다운로드로 제공한다.
+
+## 배포 위치
+
+저장소의 이 폴더 내용을 NAS `/HDD1/DocRoot/dfblackbox`에 복사한다. Apache의
+실제 PHP 경로는 `/mnt/HDD1/DocRoot/dfblackbox`이고 녹화 루트는
+`/mnt/HDD1/Media`다.
+
+`config.php`에는 Edge Function의 RSA 개인키와 짝인 공개키만 둔다. 개인키,
+Supabase secret key, NAS 계정 정보는 NAS 파일이나 저장소에 두지 않는다.
+
+## 공개 경로
+
+* `auth.php`: Edge가 서명한 로그인 증명을 POST로 받아 HttpOnly 세션 생성
+* `download.php`: 세션의 NAS 위치·카메라 경로 범위 안 MP4만 다운로드
+* `logout.php`: NAS 세션 폐기 후 웹 포털로 복귀
+
+직접 폴더 탐색, 업로드, 삭제와 녹화본 웹 재생은 제공하지 않는다.

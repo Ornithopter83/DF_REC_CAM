@@ -20,6 +20,14 @@ Deno.serve(async (request) => {
       return await registerCatalog(catalog[1], request);
     }
 
+    if (request.method === "GET" && route === "portal/cameras") {
+      return await listPortalCameras(request, publishableKey);
+    }
+
+    if (request.method === "POST" && route === "nas-session") {
+      return await createNasSessions(request, publishableKey);
+    }
+
     const cameraRecordings = route.match(/^cameras\/([0-9a-f-]{36})\/recordings$/i);
     if (request.method === "GET" && cameraRecordings) {
       return await listRecordings(cameraRecordings[1], request, publishableKey);
@@ -58,6 +66,76 @@ async function registerCatalog(deviceId: string, request: Request): Promise<Resp
     recording_id: recording.recording_id,
     catalog_state: recording.catalog_state,
   }, 200, request);
+}
+
+async function listPortalCameras(
+  request: Request,
+  publishableKey: string,
+): Promise<Response> {
+  const userJwt = bearerToken(request);
+  const value = await userRpc("list_portal_cameras", {}, publishableKey, userJwt);
+  if (!Array.isArray(value)) throw new RequestError("invalid_database_response", 502);
+  return json({
+    items: value.map((entry) => {
+      const row = objectValue(entry);
+      return {
+        id: row.camera_id,
+        display_name: row.display_name,
+        camera_type: row.camera_type,
+        connection_state: row.connection_state,
+        storage_state: row.storage_state,
+        device_id: row.device_id,
+        device_last_seen_at: row.device_last_seen_at,
+        device_public_ip: row.device_public_ip,
+        heartbeat_interval_seconds: row.heartbeat_interval_seconds,
+        device_online: Boolean(row.device_online),
+      };
+    }),
+  }, 200, request);
+}
+
+async function createNasSessions(
+  request: Request,
+  publishableKey: string,
+): Promise<Response> {
+  const userJwt = bearerToken(request);
+  const value = await userRpc("get_user_nas_session_scopes", {}, publishableKey, userJwt);
+  if (!Array.isArray(value)) throw new RequestError("invalid_database_response", 502);
+
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const assertionExpiresAt = issuedAt + 120;
+  const sessionExpiresAt = issuedAt + (8 * 60 * 60);
+  const sessions = [];
+  for (const entry of value) {
+    const row = objectValue(entry);
+    const userId = String(row.user_id ?? "");
+    if (!isUuid(userId) || !Array.isArray(row.scopes)) {
+      throw new RequestError("invalid_database_response", 502);
+    }
+    const gatewayBaseUrl = validateGatewayBaseUrl(String(row.gateway_base_url ?? ""));
+    const scopes = row.scopes.map(validateNasScope);
+    if (scopes.length === 0) continue;
+    const assertion = await signNasAssertion({
+      v: 1,
+      iss: "dfblackbox-recording-media",
+      aud: "dfblackbox-nas-gateway",
+      sub: userId,
+      iat: issuedAt,
+      exp: assertionExpiresAt,
+      session_exp: sessionExpiresAt,
+      jti: crypto.randomUUID(),
+      gateway_base_url: gatewayBaseUrl,
+      scopes,
+    });
+    sessions.push({
+      gateway_base_url: gatewayBaseUrl,
+      exchange_url: new URL("auth.php", gatewayBaseUrl).toString(),
+      logout_url: new URL("logout.php", gatewayBaseUrl).toString(),
+      session_expires_at: new Date(sessionExpiresAt * 1000).toISOString(),
+      assertion,
+    });
+  }
+  return json({ sessions }, 200, request);
 }
 
 async function listRecordings(
@@ -109,18 +187,44 @@ async function createDownloadUrl(
     throw new RequestError("recording_not_found", 404);
   }
   const recording = firstRow(value);
-  const downloadUrl = buildNasDownloadUrl(
-    String(recording.download_base_url),
+  const downloadUrl = buildGatewayDownloadUrl(
+    String(recording.gateway_base_url),
+    String(recording.recording_id),
+    String(recording.nas_location_id),
     String(recording.nas_relative_path),
   );
   return json({
     download_url: downloadUrl,
     file_name: recording.original_file_name,
-    authentication_required: true,
+    authentication_required: false,
   }, 200, request);
 }
 
-function buildNasDownloadUrl(baseValue: string, relativePath: string): string {
+function buildGatewayDownloadUrl(
+  baseValue: string,
+  recordingId: string,
+  locationId: string,
+  relativePath: string,
+): string {
+  const baseValueNormalized = validateGatewayBaseUrl(baseValue);
+  if (!isUuid(recordingId) || !isUuid(locationId)) {
+    throw new RequestError("invalid_nas_location", 502);
+  }
+  if (
+    relativePath.startsWith("/") || relativePath.includes("\\") || relativePath.includes(":") ||
+    relativePath.includes("//") || !relativePath.toLowerCase().endsWith(".mp4") ||
+    relativePath.split("/").some((segment) => !segment || segment === "." || segment === "..")
+  ) {
+    throw new RequestError("invalid_nas_location", 502);
+  }
+  const result = new URL("download.php", baseValueNormalized);
+  result.searchParams.set("recording", recordingId);
+  result.searchParams.set("location", locationId);
+  result.searchParams.set("path", relativePath);
+  return result.toString();
+}
+
+function validateGatewayBaseUrl(baseValue: string): string {
   const base = new URL(baseValue);
   if (
     base.protocol !== "https:" || base.username || base.password || base.search || base.hash ||
@@ -128,12 +232,27 @@ function buildNasDownloadUrl(baseValue: string, relativePath: string): string {
   ) {
     throw new RequestError("invalid_nas_location", 502);
   }
-  const path = relativePath.split("/").map((segment) => encodeURIComponent(segment)).join("/");
-  const result = new URL(path, base);
-  if (result.origin !== base.origin || !result.pathname.startsWith(base.pathname)) {
-    throw new RequestError("invalid_nas_location", 502);
+  return base.toString();
+}
+
+function validateNasScope(value: unknown): { location_id: string; prefixes: string[] } {
+  const scope = objectValue(value);
+  const locationId = String(scope.location_id ?? "");
+  if (!isUuid(locationId) || !Array.isArray(scope.prefixes)) {
+    throw new RequestError("invalid_database_response", 502);
   }
-  return result.toString();
+  const prefixes = scope.prefixes.map((entry) => {
+    if (typeof entry !== "string") throw new RequestError("invalid_database_response", 502);
+    const prefix = entry.trim().replace(/^\/+|\/+$/g, "");
+    if (
+      !prefix || prefix.length > 768 || prefix.includes("\\") || prefix.includes(":") ||
+      prefix.includes("//") || prefix.split("/").some((segment) => !segment || segment === "." || segment === "..")
+    ) {
+      throw new RequestError("invalid_database_response", 502);
+    }
+    return prefix;
+  });
+  return { location_id: locationId, prefixes: [...new Set(prefixes)] };
 }
 
 async function adminRpc(name: string, body: JsonObject): Promise<unknown> {
@@ -342,6 +461,50 @@ function requiredEnvironment(name: string): string {
 
 function serviceSecret(): string {
   return configuredKey("DFBLACKBOX_SUPABASE_SECRET_KEY", "SUPABASE_SECRET_KEYS", "sb_secret_");
+}
+
+let nasSigningKeyPromise: Promise<CryptoKey> | null = null;
+
+async function signNasAssertion(payload: JsonObject): Promise<string> {
+  const header = encodeBase64Url(new TextEncoder().encode(JSON.stringify({ alg: "RS256", typ: "JWT" })));
+  const body = encodeBase64Url(new TextEncoder().encode(JSON.stringify(payload)));
+  const signingInput = `${header}.${body}`;
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    await nasSigningKey(),
+    new TextEncoder().encode(signingInput),
+  );
+  return `${signingInput}.${encodeBase64Url(new Uint8Array(signature))}`;
+}
+
+function nasSigningKey(): Promise<CryptoKey> {
+  if (nasSigningKeyPromise) return nasSigningKeyPromise;
+  const pem = requiredEnvironment("NAS_SESSION_PRIVATE_KEY")
+    .replace(/\\n/g, "\n")
+    .trim();
+  const match = pem.match(/-----BEGIN PRIVATE KEY-----([\s\S]+)-----END PRIVATE KEY-----/);
+  if (!match) throw new RequestError("nas_signing_key_not_configured", 503);
+  const binary = atob(match[1].replace(/\s/g, ""));
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  nasSigningKeyPromise = crypto.subtle.importKey(
+    "pkcs8",
+    bytes,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
+  ).catch(() => {
+    nasSigningKeyPromise = null;
+    throw new RequestError("nas_signing_key_not_configured", 503);
+  });
+  return nasSigningKeyPromise;
+}
+
+function encodeBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
 function getRoute(rawUrl: string): string {

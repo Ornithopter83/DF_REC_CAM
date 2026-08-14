@@ -142,6 +142,7 @@ async function getDeviceCommand(
   const rows = await adminRpc("get_device_stream_command", {
     p_device_id: deviceId,
     p_device_token: deviceToken,
+    p_public_ip: clientPublicIp(request),
   });
   if (!Array.isArray(rows) || rows.length === 0) {
     return json({ should_stream: false }, 200, request);
@@ -161,6 +162,13 @@ async function getDeviceCommand(
     200,
     request,
   );
+}
+
+function clientPublicIp(request: Request): string | null {
+  const candidate = (request.headers.get("x-forwarded-for") ?? "")
+    .split(",")[0]
+    .trim();
+  return /^[0-9a-f:.]{3,64}$/i.test(candidate) ? candidate : null;
 }
 
 async function reportDeviceState(

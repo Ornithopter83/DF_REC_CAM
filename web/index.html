@@ -135,6 +135,8 @@
                 <div><dt>종류</dt><dd data-field="type"></dd></div>
                 <div><dt>연결</dt><dd data-field="connection"></dd></div>
                 <div><dt>저장소</dt><dd data-field="storage"></dd></div>
+                <div><dt>기기 IP</dt><dd data-field="ip"></dd></div>
+                <div><dt>마지막 확인</dt><dd data-field="last-seen"></dd></div>
               </dl>
               <div class="camera-actions">
                 <button data-action="live-start" class="button button-primary" type="button">실시간 보기</button>
@@ -150,7 +152,7 @@
             <div>
               <span class="step-label">NAS 녹화 파일</span>
               <h2 id="recordingsTitle">녹화 다운로드</h2>
-              <p id="recordingsDescription">NAS에 보관된 녹화영상은 재생하지 않고 인증 후 다운로드만 제공합니다.</p>
+              <p id="recordingsDescription">NAS에 보관된 녹화영상은 웹 로그인 권한으로 확인하며 재생 없이 다운로드만 제공합니다.</p>
             </div>
             <button id="recordingsRefreshButton" class="button button-secondary" type="button">목록 새로고침</button>
           </div>
@@ -167,7 +169,7 @@
               <div id="recordingPlayerEmpty" class="recording-player-empty">
                 <span class="camera-glyph" aria-hidden="true"></span>
                 <strong>다운로드할 영상을 선택하세요.</strong>
-                <span>NAS 로그인 화면이 열리면 다운로드 전용 계정으로 인증하세요.</span>
+                <span>별도 NAS 로그인 없이 선택한 원본 MP4를 다운로드합니다.</span>
               </div>
               <div class="recording-player-footer">
                 <div>

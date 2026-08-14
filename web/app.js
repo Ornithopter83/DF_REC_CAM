@@ -3,18 +3,24 @@
 
   const config = window.DFBLACKBOX_CONFIG;
   const sessionKey = "dfblackbox.portal.session";
-  const claimCode = new URLSearchParams(window.location.search).get("code")?.trim().toUpperCase() ?? "";
+  const nasSsoKey = "dfblackbox.portal.nas-sso";
+  const initialQuery = new URLSearchParams(window.location.search);
+  const claimCode = initialQuery.get("code")?.trim().toUpperCase() ?? "";
+  const nasSsoResult = initialQuery.get("nas_sso")?.trim().toLowerCase() ?? "";
   let session = readSession();
   let organizations = [];
   let camerasById = new Map();
   let activeLive = null;
   let selectedCamera = null;
   let recordings = [];
+  let recordingsByCamera = new Map();
   let selectedRecording = null;
   let recordingsNextCursor = null;
   let liveAttemptId = 0;
   let liveStartAbortController = null;
   let recordingsRequestId = 0;
+  let presenceTimer = null;
+  let pendingNasNotice = "";
 
   const elements = {
     notice: document.querySelector("#notice"),
@@ -83,7 +89,12 @@
 
     try {
       await validateSession();
+      if (!claimCode) {
+        handleNasSsoReturn();
+        if (nasSsoResult !== "error" && await ensureNasSessions()) return;
+      }
       await showSignedIn();
+      if (pendingNasNotice) showNotice(pendingNasNotice, "error");
     } catch {
       clearSession();
       showSignedOut();
@@ -113,7 +124,9 @@
         email: body.user?.email ?? elements.emailInput.value.trim(),
       };
       sessionStorage.setItem(sessionKey, JSON.stringify(session));
+      clearNasSsoState();
       elements.passwordInput.value = "";
+      if (!claimCode && await ensureNasSessions(true)) return;
       await showSignedIn();
     } catch (error) {
       showNotice(error.message || "로그인에 실패했습니다.", "error");
@@ -174,6 +187,7 @@
   }
 
   function showSignedOut() {
+    clearPresenceTimer();
     stopActiveLive().catch(() => undefined);
     closeRecordings();
     elements.loginPanel.hidden = false;
@@ -261,10 +275,25 @@
 
   async function loadPortal() {
     await stopActiveLive();
+    clearPresenceTimer();
     setBusy(elements.refreshButton, true, "불러오는 중…");
     try {
-      const cameras = await rest("cameras?select=id,display_name,camera_type,connection_state,storage_state&order=created_at.desc");
+      const result = await serviceRequest(config.recordingMediaBaseUrl, "portal/cameras", { method: "GET" });
+      const cameras = Array.isArray(result.items) ? result.items : [];
       renderCameras(cameras);
+      recordingsByCamera = new Map();
+      const recordingResults = await Promise.allSettled(cameras.map(async (camera) => {
+        const page = await fetchRecordingPage(camera.id);
+        recordingsByCamera.set(camera.id, page);
+        updateRecordingCount(camera.id, page.items.length);
+      }));
+      if (recordingResults.some((item) => item.status === "rejected")) {
+        showNotice("일부 카메라의 녹화 목록을 불러오지 못했습니다. 목록 새로고침을 사용하세요.", "error");
+      }
+      if (selectedCamera && recordingsByCamera.has(selectedCamera.id)) {
+        useCachedRecordings(selectedCamera.id);
+      }
+      schedulePresenceRefresh(cameras);
     } catch (error) {
       showNotice(error.message, "error");
     } finally {
@@ -287,10 +316,7 @@
       const card = elements.cameraCardTemplate.content.cloneNode(true);
       const article = card.querySelector(".camera-card");
       article.dataset.cameraId = camera.id;
-      card.querySelector('[data-field="name"]').textContent = camera.display_name;
-      card.querySelector('[data-field="type"]').textContent = camera.camera_type;
-      card.querySelector('[data-field="connection"]').textContent = statusText(camera.connection_state);
-      card.querySelector('[data-field="storage"]').textContent = statusText(camera.storage_state);
+      applyCameraState(article, camera);
       card.querySelector('[data-action="live-start"]').addEventListener("click", () => startLive(camera, article));
       card.querySelector('[data-action="live-stop"]').addEventListener("click", stopActiveLive);
       card.querySelector('[data-action="recordings"]').addEventListener("click", () => openRecordings(camera));
@@ -301,6 +327,94 @@
       selectedCamera = camerasById.get(selectedCamera.id) ?? null;
       if (!selectedCamera) closeRecordings();
     }
+  }
+
+  function applyCameraState(article, camera) {
+    article.querySelector('[data-field="name"]').textContent = camera.display_name;
+    article.querySelector('[data-field="type"]').textContent = camera.camera_type;
+    article.querySelector('[data-field="connection"]').textContent = camera.device_online
+      ? `온라인 · ${statusText(camera.connection_state)}`
+      : "오프라인";
+    article.querySelector('[data-field="storage"]').textContent = statusText(camera.storage_state);
+    article.querySelector('[data-field="ip"]').textContent = camera.device_public_ip || "확인되지 않음";
+    article.querySelector('[data-field="last-seen"]').textContent = formatLastSeen(camera.device_last_seen_at);
+  }
+
+  async function fetchRecordingPage(cameraId, cursor = null) {
+    const cursorQuery = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+    const result = await serviceRequest(
+      config.recordingMediaBaseUrl,
+      `cameras/${encodeURIComponent(cameraId)}/recordings?limit=50${cursorQuery}`,
+      { method: "GET" },
+    );
+    return {
+      items: Array.isArray(result.items) ? result.items : [],
+      nextCursor: typeof result.next_cursor === "string" && result.next_cursor ? result.next_cursor : null,
+    };
+  }
+
+  function useCachedRecordings(cameraId) {
+    const cached = recordingsByCamera.get(cameraId) ?? { items: [], nextCursor: null };
+    recordings = [...cached.items];
+    recordingsNextCursor = cached.nextCursor;
+    clearRecordingPlayer();
+    renderRecordings();
+    elements.recordingsLoading.hidden = true;
+    elements.recordingsMoreButton.hidden = !recordingsNextCursor;
+  }
+
+  function updateRecordingCount(cameraId, count) {
+    const article = [...elements.cameraGrid.querySelectorAll(".camera-card")]
+      .find((item) => item.dataset.cameraId === cameraId);
+    const button = article?.querySelector('[data-action="recordings"]');
+    if (button) button.textContent = `녹화 다운로드 (${count})`;
+  }
+
+  function schedulePresenceRefresh(cameras = [...camerasById.values()]) {
+    clearPresenceTimer();
+    if (!session || !cameras.length) return;
+    const intervalSeconds = Math.min(...cameras.map((camera) => {
+      const heartbeat = Number(camera.heartbeat_interval_seconds ?? 3);
+      return Math.min(Math.max(heartbeat * 3, 10), 60);
+    }));
+    presenceTimer = window.setTimeout(refreshCameraPresence, intervalSeconds * 1000);
+  }
+
+  async function refreshCameraPresence() {
+    presenceTimer = null;
+    try {
+      const result = await serviceRequest(config.recordingMediaBaseUrl, "portal/cameras", { method: "GET" });
+      const cameras = Array.isArray(result.items) ? result.items : [];
+      camerasById = new Map(cameras.map((camera) => [camera.id, camera]));
+      for (const camera of cameras) {
+        const article = [...elements.cameraGrid.querySelectorAll(".camera-card")]
+          .find((item) => item.dataset.cameraId === camera.id);
+        if (article) applyCameraState(article, camera);
+      }
+      if (selectedCamera) selectedCamera = camerasById.get(selectedCamera.id) ?? null;
+      schedulePresenceRefresh(cameras);
+    } catch {
+      schedulePresenceRefresh();
+    }
+  }
+
+  function clearPresenceTimer() {
+    if (presenceTimer !== null) {
+      clearTimeout(presenceTimer);
+      presenceTimer = null;
+    }
+  }
+
+  function formatLastSeen(value) {
+    const date = new Date(value ?? "");
+    if (!Number.isFinite(date.getTime())) return "접속 기록 없음";
+    return new Intl.DateTimeFormat("ko-KR", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).format(date);
   }
 
   async function startLive(camera, card) {
@@ -498,6 +612,7 @@
   }
 
   function stopLiveForPageExit() {
+    clearPresenceTimer();
     liveAttemptId += 1;
     liveStartAbortController?.abort();
     liveStartAbortController = null;
@@ -558,6 +673,10 @@
     elements.recordingsTitle.textContent = `${camera.display_name} 녹화 다운로드`;
     elements.recordingsDescription.textContent = "PC가 오프라인이어도 NAS가 접속 가능하면 등록된 녹화 파일을 다운로드할 수 있습니다.";
     elements.recordingsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (recordingsByCamera.has(camera.id)) {
+      useCachedRecordings(camera.id);
+      return;
+    }
     await loadRecordings(camera);
   }
 
@@ -585,17 +704,14 @@
     }
 
     try {
-      const cursorQuery = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
-      const result = await serviceRequest(
-        config.recordingMediaBaseUrl,
-        `cameras/${encodeURIComponent(cameraId)}/recordings?limit=50${cursorQuery}`,
-        { method: "GET" },
-      );
+      const result = await fetchRecordingPage(cameraId, cursor);
       if (selectedCamera?.id !== cameraId || requestId !== recordingsRequestId) return;
 
-      const items = Array.isArray(result.items) ? result.items : [];
+      const items = result.items;
       recordings = append ? [...recordings, ...items] : items;
-      recordingsNextCursor = typeof result.next_cursor === "string" && result.next_cursor ? result.next_cursor : null;
+      recordingsNextCursor = result.nextCursor;
+      recordingsByCamera.set(cameraId, { items: recordings, nextCursor: recordingsNextCursor });
+      updateRecordingCount(cameraId, recordings.length);
       renderRecordings();
     } catch (error) {
       if (selectedCamera?.id !== cameraId || requestId !== recordingsRequestId) return;
@@ -673,9 +789,7 @@
       document.body.append(anchor);
       anchor.click();
       anchor.remove();
-      if (result.authentication_required) {
-        showNotice("NAS 로그인 화면이 열리면 다운로드 전용 계정으로 인증하세요.", "success");
-      }
+      showNotice("NAS에서 녹화영상 다운로드를 시작했습니다.", "success");
     } catch (error) {
       showNotice(error.message || "녹화영상 다운로드를 준비하지 못했습니다.", "error");
     } finally {
@@ -776,9 +890,146 @@
         headers: authenticatedHeaders(),
       }).catch(() => undefined);
     }
+    const logoutUrl = firstNasLogoutUrl();
     clearSession();
+    clearNasSsoState();
     hideNotice();
+    if (logoutUrl) {
+      const url = new URL(logoutUrl);
+      url.searchParams.set("return_to", portalReturnUrl());
+      window.location.assign(url.toString());
+      return;
+    }
     showSignedOut();
+  }
+
+  function handleNasSsoReturn() {
+    if (!nasSsoResult) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("nas_sso");
+    window.history.replaceState({}, "", url.toString());
+
+    const state = readNasSsoState();
+    if (nasSsoResult === "ready" && state && Number.isInteger(state.pendingIndex)) {
+      const current = state.sessions?.[state.pendingIndex];
+      if (current) {
+        current.ready = true;
+        current.assertion = "";
+        state.pendingIndex = null;
+        writeNasSsoState(state);
+      }
+      return;
+    }
+    if (nasSsoResult === "error") {
+      clearNasSsoState();
+      pendingNasNotice = "NAS 다운로드 로그인을 연결하지 못했습니다. 새로고침하여 다시 시도하세요.";
+    }
+  }
+
+  async function ensureNasSessions(force = false) {
+    let state = readNasSsoState();
+    const now = Date.now();
+    if (!force && state?.sessions?.length
+        && state.sessions.every((item) => item.ready)
+        && Number(state.expiresAt) > now + 60_000) {
+      return false;
+    }
+
+    if (!force && state?.sessions?.length) {
+      const pendingIndex = state.sessions.findIndex((item) => !item.ready && item.assertion);
+      if (pendingIndex >= 0) {
+        return submitNasExchange(state, pendingIndex);
+      }
+    }
+
+    const result = await serviceRequest(config.recordingMediaBaseUrl, "nas-session", {
+      method: "POST",
+      body: "{}",
+    });
+    const sessions = Array.isArray(result.sessions) ? result.sessions.map(normalizeNasSession) : [];
+    if (!sessions.length) {
+      clearNasSsoState();
+      return false;
+    }
+    state = {
+      sessions,
+      pendingIndex: null,
+      expiresAt: Math.min(...sessions.map((item) => item.expiresAt)),
+    };
+    writeNasSsoState(state);
+    return submitNasExchange(state, 0);
+  }
+
+  function normalizeNasSession(value) {
+    const exchangeUrl = requireNasGatewayUrl(value?.exchange_url, "auth.php");
+    const logoutUrl = requireNasGatewayUrl(value?.logout_url, "logout.php");
+    const assertion = typeof value?.assertion === "string" ? value.assertion : "";
+    const expiresAt = Date.parse(value?.session_expires_at ?? "");
+    if (!assertion || assertion.length > 16_384 || !Number.isFinite(expiresAt)) {
+      throw new Error("NAS 로그인 응답이 올바르지 않습니다.");
+    }
+    return { exchangeUrl, logoutUrl, assertion, expiresAt, ready: false };
+  }
+
+  function requireNasGatewayUrl(value, fileName) {
+    const url = new URL(String(value ?? ""));
+    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash
+        || !url.pathname.endsWith(`/${fileName}`)) {
+      throw new Error("NAS 로그인 주소가 올바르지 않습니다.");
+    }
+    return url.toString();
+  }
+
+  function submitNasExchange(state, index) {
+    const target = state.sessions[index];
+    if (!target?.assertion || target.expiresAt <= Date.now()) {
+      clearNasSsoState();
+      return false;
+    }
+    state.pendingIndex = index;
+    writeNasSsoState(state);
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = target.exchangeUrl;
+    form.hidden = true;
+    const assertion = document.createElement("input");
+    assertion.type = "hidden";
+    assertion.name = "assertion";
+    assertion.value = target.assertion;
+    const returnTo = document.createElement("input");
+    returnTo.type = "hidden";
+    returnTo.name = "return_to";
+    returnTo.value = portalReturnUrl();
+    form.append(assertion, returnTo);
+    document.body.append(form);
+    form.submit();
+    return true;
+  }
+
+  function portalReturnUrl() {
+    return new URL("./", window.location.href).toString();
+  }
+
+  function readNasSsoState() {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(nasSsoKey));
+      return value && Array.isArray(value.sessions) ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeNasSsoState(value) {
+    sessionStorage.setItem(nasSsoKey, JSON.stringify(value));
+  }
+
+  function clearNasSsoState() {
+    sessionStorage.removeItem(nasSsoKey);
+  }
+
+  function firstNasLogoutUrl() {
+    const state = readNasSsoState();
+    return state?.sessions?.find((item) => item.ready)?.logoutUrl ?? "";
   }
 
   async function rest(path) {
@@ -906,6 +1157,9 @@
       ingress_creation_failed: "실시간 송출 채널을 만들지 못했습니다.",
       livekit_not_configured: "실시간 서버 설정이 완료되지 않았습니다.",
       nas_location_not_configured: "NAS 다운로드 위치 설정이 완료되지 않았습니다.",
+      nas_signing_key_not_configured: "NAS 통합 로그인 서명 설정이 완료되지 않았습니다.",
+      nas_session_scope_not_found: "이 계정에 허용된 NAS 다운로드 범위가 없습니다.",
+      nas_session_creation_failed: "NAS 통합 로그인을 준비하지 못했습니다.",
       invalid_nas_location: "NAS 다운로드 주소 설정이 올바르지 않습니다.",
       invalid_cursor: "녹화영상 목록 위치가 만료됐습니다. 목록을 새로고침하세요.",
       server_not_configured: "미디어 서버 설정이 완료되지 않았습니다.",
