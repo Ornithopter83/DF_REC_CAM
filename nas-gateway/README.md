@@ -1,5 +1,7 @@
 # DFBlackbox NAS Gateway
 
+`provision.php`는 장치 토큰을 직접 받지 않고 Edge가 서명한 카메라 범위 assertion만 검증한다. 허용된 카메라 루트와 `live`, `recordings`, `events`, `temp` 폴더만 생성하고 쓰기 검사를 수행한다.
+
 NAS1DUAL의 Apache/PHP 7.3 환경에서 Supabase 웹 로그인 사용자를 NAS 세션으로
 교환하고, 허용된 녹화 MP4만 attachment·Range 다운로드로 제공한다. 장치는 별도
 audience의 서명 세션으로 카메라 경로에 MP4를 조각·이어올리기한다.

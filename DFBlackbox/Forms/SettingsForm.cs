@@ -785,23 +785,11 @@ public sealed class SettingsForm : KryptonForm
             return;
         }
 
-        string nasRootFolder = _workingSettings.DeviceRegistration.NasRootFolder;
         if (string.IsNullOrWhiteSpace(_workingSettings.DeviceRegistration.SupabasePublishableKey))
         {
             MessageBox.Show(
                 this,
                 Localization.T("Registration.MissingPublishableKey"),
-                Localization.T("Registration.Title"),
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
-            return;
-        }
-
-        if (!Path.IsPathFullyQualified(nasRootFolder) || !Directory.Exists(nasRootFolder))
-        {
-            MessageBox.Show(
-                this,
-                Localization.T("Registration.InvalidNasRoot"),
                 Localization.T("Registration.Title"),
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);

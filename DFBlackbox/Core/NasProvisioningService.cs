@@ -1,3 +1,5 @@
+using DFBlackbox.Models;
+
 namespace DFBlackbox.Core;
 
 public interface INasProvisioningService
@@ -5,6 +7,15 @@ public interface INasProvisioningService
     Task<NasProvisioningResult> ProvisionAsync(
         string rootFolder,
         string relativePath,
+        CancellationToken cancellationToken);
+}
+
+public interface INasHttpsProvisioningService
+{
+    Task<NasProvisioningResult> ProvisionAsync(
+        string deviceId,
+        string cameraId,
+        string deviceToken,
         CancellationToken cancellationToken);
 }
 
@@ -34,11 +45,7 @@ public sealed class NasProvisioningService : INasProvisioningService
 
             targetFolder = ResolveWithinRoot(rootFolder, relativePath);
         }
-        catch (ArgumentException)
-        {
-            return new NasProvisioningResult(false, "invalid_nas_relative_path");
-        }
-        catch (NotSupportedException)
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException)
         {
             return new NasProvisioningResult(false, "invalid_nas_relative_path");
         }
@@ -97,12 +104,63 @@ public sealed class NasProvisioningService : INasProvisioningService
         string fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootFolder));
         string normalizedRelativePath = relativePath.Replace('/', Path.DirectorySeparatorChar);
         string fullTarget = Path.GetFullPath(Path.Combine(fullRoot, normalizedRelativePath));
-        string rootPrefix = fullRoot + Path.DirectorySeparatorChar;
-        if (!fullTarget.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+        if (!fullTarget.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException("The NAS path is outside the configured root.", nameof(relativePath));
         }
 
         return fullTarget;
+    }
+}
+
+public sealed class HttpNasProvisioningService : INasHttpsProvisioningService, IDisposable
+{
+    private readonly HttpRecordingMediaClient _client;
+
+    public HttpNasProvisioningService(HttpRecordingMediaClient client)
+    {
+        _client = client;
+    }
+
+    public async Task<NasProvisioningResult> ProvisionAsync(
+        string deviceId,
+        string cameraId,
+        string deviceToken,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            CreateNasUploadSessionResponse session = await _client.CreateNasUploadSessionAsync(
+                deviceId,
+                deviceToken,
+                cameraId,
+                cancellationToken);
+            NasProvisionResponse response = await _client.ProvisionNasAsync(session, cancellationToken);
+            return string.Equals(response.State, "ready", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(response.NasRelativePath, session.NasRelativePath, StringComparison.Ordinal)
+                ? new NasProvisioningResult(true)
+                : new NasProvisioningResult(false, "nas_path_mismatch");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (HttpRequestException exception)
+        {
+            return new NasProvisioningResult(
+                false,
+                exception.StatusCode.HasValue
+                    ? $"nas_http_{(int)exception.StatusCode.Value}"
+                    : "nas_network_error");
+        }
+        catch (InvalidDataException)
+        {
+            return new NasProvisioningResult(false, "nas_invalid_response");
+        }
+    }
+
+    public void Dispose()
+    {
+        _client.Dispose();
     }
 }

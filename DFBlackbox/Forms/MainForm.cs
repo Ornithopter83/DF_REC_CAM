@@ -2680,7 +2680,11 @@ public sealed partial class MainForm : KryptonForm
             request,
             client,
             tokenStore,
-            new NasProvisioningService(),
+            new HttpNasProvisioningService(new HttpRecordingMediaClient(
+                HttpRecordingMediaClient.DeriveBaseAddress(
+                    new Uri(registrationSettings.ApiBaseUrl, UriKind.Absolute)),
+                TimeSpan.FromSeconds(30),
+                registrationSettings.SupabasePublishableKey)),
             SaveDeviceRegistrationResult);
     }
 

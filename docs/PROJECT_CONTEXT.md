@@ -58,6 +58,7 @@ DFBlackbox는 .NET 8 Windows Forms 기반 블랙박스/감시 녹화 애플리�
 - 인증 정보와 전체 RTSP URL은 로그에 남기지 않는다.
 - 완성 MP4 이송은 ipDISK Drive·SMB 대신 내·외부망 공통 NAS HTTPS Gateway를 사용한다. Edge가 장치 토큰과 카메라 소유권을 확인해 범위 제한 assertion을 발급하고, NAS가 조각 offset·전체 길이·SHA-256을 확인한 뒤 최종 파일로 전환한다.
 - NAS 또는 외부망이 끊기면 로컬 완성본을 보존하고 다음 실행이나 주기 재검사에서 NAS offset부터 재개한다. NAS 확정과 DB 카탈로그 `ready`가 모두 완료된 파일만 보존기간 자동 정리 대상이 된다.
+- 신규 PC의 기기 등록은 로컬 NAS SMB 루트를 요구하지 않는다. 승인 후 장치 토큰으로 Edge에서 카메라 경로 범위 assertion을 발급받아 NAS HTTPS Gateway가 카메라 루트와 `live`, `recordings`, `events`, `temp`를 생성하고 쓰기 가능 여부를 확인한다.
 
 ### 배포/운영
 

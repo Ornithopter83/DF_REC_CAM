@@ -21,10 +21,16 @@ public sealed record CreateNasUploadSessionRequest(
 
 public sealed record CreateNasUploadSessionResponse(
     [property: JsonPropertyName("gateway_base_url")] string GatewayBaseUrl,
+    [property: JsonPropertyName("nas_relative_path")] string NasRelativePath,
+    [property: JsonPropertyName("provision_url")] string ProvisionUrl,
     [property: JsonPropertyName("upload_url")] string UploadUrl,
     [property: JsonPropertyName("session_expires_at")] DateTimeOffset SessionExpiresAt,
     [property: JsonPropertyName("chunk_size_bytes")] int ChunkSizeBytes,
     [property: JsonPropertyName("assertion")] string Assertion);
+
+public sealed record NasProvisionResponse(
+    [property: JsonPropertyName("state")] string State,
+    [property: JsonPropertyName("nas_relative_path")] string NasRelativePath);
 
 public sealed record CreateNasUploadRequest(
     [property: JsonPropertyName("relative_path")] string RelativePath,

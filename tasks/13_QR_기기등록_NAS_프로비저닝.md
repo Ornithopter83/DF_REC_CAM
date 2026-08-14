@@ -243,6 +243,7 @@ POST /devices/{device_id}/provisioning-result
 * 등록과 NAS 준비가 완료되면 등록 팝업을 닫았다 다시 열지 않아도 즉시 완료 화면으로 전환한다. QR·등록코드·만료시간·승인 관련 버튼을 숨기고 등록명과 NAS 상대 경로 및 `닫기` 버튼을 표시하며, 완료 화면 전환 전에 `settings.json`과 HKCU 등록 정보를 저장한다.
 * 승인 웹이 로그인 후 등록코드 상태를 조회하도록 `GET /device-claims/{claim_code}`와 `inspect_device_claim` DB 함수를 추가했다. `pending`일 때만 승인 폼을 표시하고 `approved/rejected/expired/not_found`는 읽기 전용 종료 화면으로 전환해 처리된 승인 URL을 다시 사용할 수 없게 했다.
 * 적용 완료된 004 마이그레이션은 변경하지 않고 `202608120005_claim_inspection.sql`을 별도로 추가했다. `supabase db push --dry-run`에서 005만 적용 대상으로 확인했으며, 실제 DB push·Edge Function 재배포·Pages 재배포는 아직 필요하다.
+* 2026-08-14 작업 21에서 신규 PC 등록의 로컬 SMB 루트 사전검사와 SMB 폴더 생성을 폐기했다. 승인 후에는 장치 토큰으로 Edge 범위 세션을 발급받고 NAS HTTPS Gateway가 카메라 기본 폴더를 생성·쓰기 검사한다.
 
 ## 새 스레드 시작 명령서
 

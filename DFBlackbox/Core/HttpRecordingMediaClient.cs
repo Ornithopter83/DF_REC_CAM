@@ -69,14 +69,42 @@ public sealed class HttpRecordingMediaClient : IDisposable
             || string.IsNullOrWhiteSpace(value.Assertion)
             || value.ChunkSizeBytes <= 0
             || value.SessionExpiresAt <= DateTimeOffset.UtcNow
+            || !IsSafeNasRelativePath(value.NasRelativePath)
             || !Uri.TryCreate(value.GatewayBaseUrl, UriKind.Absolute, out Uri? gatewayBase)
+            || !Uri.TryCreate(value.ProvisionUrl, UriKind.Absolute, out Uri? provisionUri)
             || !Uri.TryCreate(value.UploadUrl, UriKind.Absolute, out Uri? uploadUri)
             || !string.Equals(gatewayBase.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(provisionUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(uploadUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(gatewayBase.Host, provisionUri.Host, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(gatewayBase.Host, uploadUri.Host, StringComparison.OrdinalIgnoreCase)
-            || gatewayBase.Port != uploadUri.Port)
+            || gatewayBase.Port != provisionUri.Port
+            || gatewayBase.Port != uploadUri.Port
+            || new Uri(gatewayBase, "provision.php") != provisionUri
+            || new Uri(gatewayBase, "upload.php") != uploadUri)
         {
             throw new InvalidDataException("The recording server returned an invalid NAS upload session.");
+        }
+
+        return value;
+    }
+
+    public async Task<NasProvisionResponse> ProvisionNasAsync(
+        CreateNasUploadSessionResponse session,
+        CancellationToken cancellationToken)
+    {
+        using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(session.ProvisionUrl, UriKind.Absolute));
+        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", session.Assertion);
+        message.Content = new ByteArrayContent(Array.Empty<byte>());
+        using HttpResponseMessage response = await _nasHttpClient.SendAsync(message, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        NasProvisionResponse? value =
+            await response.Content.ReadFromJsonAsync<NasProvisionResponse>(JsonOptions, cancellationToken);
+        if (value is null
+            || !string.Equals(value.State, "ready", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(value.NasRelativePath))
+        {
+            throw new InvalidDataException("The NAS returned an invalid provisioning response.");
         }
 
         return value;
@@ -225,6 +253,16 @@ public sealed class HttpRecordingMediaClient : IDisposable
 
         return value;
     }
+
+    private static bool IsSafeNasRelativePath(string value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.Length <= 768
+        && !value.StartsWith('/')
+        && !value.EndsWith('/')
+        && !value.Contains('\\')
+        && !value.Contains(':')
+        && !value.Contains("//", StringComparison.Ordinal)
+        && value.Split('/').All(segment => segment is not ("" or "." or ".."));
 
     private static Uri EnsureTrailingSlash(Uri uri) => uri.AbsoluteUri.EndsWith('/')
         ? uri

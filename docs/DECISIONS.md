@@ -101,3 +101,4 @@ YYYY-MM-DD
 - 신규 녹화 이송은 ipDISK Drive·SMB를 요구하지 않고 내·외부망에서 동일한 NAS HTTPS Gateway를 사용한다. 장치 토큰은 Edge에만 보내며 NAS에는 장치·카메라·NAS 위치·경로가 제한된 1시간 RS256 assertion만 전달한다.
 - NAS 업로드는 4MiB 조각과 서버 offset으로 재개하고, NAS가 전체 길이와 SHA-256을 확인한 뒤 같은 볼륨의 최종 `recordings/*.mp4`로 원자적 전환한다. NAS 확정과 DB 카탈로그 `ready` 전에는 로컬 완성본을 자동 삭제하지 않는다.
 - 012 마이그레이션과 `recording-media`·NAS Gateway를 원격 배포했다. 4MiB에서 중단한 117,008,977바이트 MP4를 앱 재시작 후 이어올려 로컬·NAS·웹 다운로드 SHA-256 일치, DB `ready`, 웹 목록과 별도 NAS 로그인 없는 다운로드를 확인했다.
+- 신규 PC 등록의 NAS 준비는 로컬 SMB 프로비저닝을 사용하지 않는다. 등록 승인 후 Edge가 발급한 카메라 범위 assertion으로 NAS HTTPS Gateway가 표준 폴더를 생성·쓰기 검사하며, 기존 `NasRootFolder` 설정 필드는 JSON 하위 호환용으로만 유지한다.

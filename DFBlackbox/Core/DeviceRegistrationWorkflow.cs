@@ -6,7 +6,8 @@ public sealed class DeviceRegistrationWorkflow
 {
     private readonly IDeviceRegistrationClient _client;
     private readonly IDeviceTokenStore _tokenStore;
-    private readonly INasProvisioningService _nasProvisioning;
+    private readonly INasProvisioningService? _legacyNasProvisioning;
+    private readonly INasHttpsProvisioningService? _httpsNasProvisioning;
 
     public DeviceRegistrationWorkflow(
         IDeviceRegistrationClient client,
@@ -15,7 +16,17 @@ public sealed class DeviceRegistrationWorkflow
     {
         _client = client;
         _tokenStore = tokenStore;
-        _nasProvisioning = nasProvisioning;
+        _legacyNasProvisioning = nasProvisioning;
+    }
+
+    public DeviceRegistrationWorkflow(
+        IDeviceRegistrationClient client,
+        IDeviceTokenStore tokenStore,
+        INasHttpsProvisioningService nasProvisioning)
+    {
+        _client = client;
+        _tokenStore = tokenStore;
+        _httpsNasProvisioning = nasProvisioning;
     }
 
     public async Task<DeviceRegistrationResult> RunAsync(
@@ -142,10 +153,16 @@ public sealed class DeviceRegistrationWorkflow
         CancellationToken cancellationToken)
     {
         progress?.Report(new DeviceRegistrationProgress(DeviceRegistrationStage.ProvisioningStorage));
-        NasProvisioningResult storage = await _nasProvisioning.ProvisionAsync(
-            settings.NasRootFolder,
-            relativePath,
-            cancellationToken);
+        NasProvisioningResult storage = _httpsNasProvisioning is not null
+            ? await _httpsNasProvisioning.ProvisionAsync(
+                deviceId,
+                cameraId,
+                deviceToken,
+                cancellationToken)
+            : await _legacyNasProvisioning!.ProvisionAsync(
+                settings.NasRootFolder,
+                relativePath,
+                cancellationToken);
         var report = new ProvisioningResultRequest(
             "active",
             storage.IsReady ? "ready" : "storage_error",

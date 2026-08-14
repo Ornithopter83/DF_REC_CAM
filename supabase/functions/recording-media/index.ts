@@ -110,6 +110,8 @@ async function createDeviceNasUploadSession(
   });
   return json({
     gateway_base_url: gatewayBaseUrl,
+    nas_relative_path: prefix,
+    provision_url: new URL("provision.php", gatewayBaseUrl).toString(),
     upload_url: new URL("upload.php", gatewayBaseUrl).toString(),
     session_expires_at: new Date(expiresAt * 1000).toISOString(),
     chunk_size_bytes: 4 * 1024 * 1024,

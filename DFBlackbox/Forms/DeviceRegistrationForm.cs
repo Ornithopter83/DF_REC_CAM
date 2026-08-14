@@ -14,6 +14,7 @@ public sealed class DeviceRegistrationForm : KryptonForm
     private readonly DeviceRegistrationWorkflow _workflow;
     private readonly Action<DeviceRegistrationResult>? _registrationCompleted;
     private readonly IDisposable? _ownedClient;
+    private readonly IDisposable? _ownedNasProvisioning;
     private readonly Label _status = new();
     private readonly PictureBox _qrCode = new();
     private readonly Panel _qrHost = new();
@@ -36,12 +37,47 @@ public sealed class DeviceRegistrationForm : KryptonForm
         IDeviceTokenStore tokenStore,
         INasProvisioningService nasProvisioning,
         Action<DeviceRegistrationResult>? registrationCompleted = null)
+        : this(
+            settings,
+            request,
+            client,
+            new DeviceRegistrationWorkflow(client, tokenStore, nasProvisioning),
+            nasProvisioning as IDisposable,
+            registrationCompleted)
+    {
+    }
+
+    public DeviceRegistrationForm(
+        DeviceRegistrationSettings settings,
+        CreateDeviceClaimRequest request,
+        IDeviceRegistrationClient client,
+        IDeviceTokenStore tokenStore,
+        INasHttpsProvisioningService nasProvisioning,
+        Action<DeviceRegistrationResult>? registrationCompleted = null)
+        : this(
+            settings,
+            request,
+            client,
+            new DeviceRegistrationWorkflow(client, tokenStore, nasProvisioning),
+            nasProvisioning as IDisposable,
+            registrationCompleted)
+    {
+    }
+
+    private DeviceRegistrationForm(
+        DeviceRegistrationSettings settings,
+        CreateDeviceClaimRequest request,
+        IDeviceRegistrationClient client,
+        DeviceRegistrationWorkflow workflow,
+        IDisposable? ownedNasProvisioning,
+        Action<DeviceRegistrationResult>? registrationCompleted)
     {
         _settings = settings;
         _request = request;
-        _workflow = new DeviceRegistrationWorkflow(client, tokenStore, nasProvisioning);
+        _workflow = workflow;
         _registrationCompleted = registrationCompleted;
         _ownedClient = client as IDisposable;
+        _ownedNasProvisioning = ownedNasProvisioning;
 
         Text = Localization.T("Registration.Title");
         StartPosition = FormStartPosition.CenterParent;
@@ -68,6 +104,7 @@ public sealed class DeviceRegistrationForm : KryptonForm
             _registrationCancellation?.Dispose();
             ReplaceQrCode(null);
             _ownedClient?.Dispose();
+            _ownedNasProvisioning?.Dispose();
         }
 
         base.Dispose(disposing);
