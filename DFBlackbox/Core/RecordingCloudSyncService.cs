@@ -434,6 +434,7 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
     private static bool IsCompletedRecording(string path) =>
         path.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)
         && !path.EndsWith(".recording.mp4", StringComparison.OrdinalIgnoreCase)
+        && !path.EndsWith("_recording.mp4", StringComparison.OrdinalIgnoreCase)
         && !path.EndsWith(".crashed.mp4", StringComparison.OrdinalIgnoreCase)
         && !path.EndsWith(".uploading.mp4", StringComparison.OrdinalIgnoreCase);
 
