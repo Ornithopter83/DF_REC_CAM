@@ -149,3 +149,4 @@ NAS:  {nas_root}/{nas_relative_path}/recordings/{yyyy}/{MM}/{dd}/{timestamp}.mp4
 * `스트리밍` 브랜치 푸시 후 GitHub Pages 배포 워크플로가 성공해 웹 포털 변경 배포를 확인했다.
 * 2026-08-14 정책 전환으로 대용량 녹화의 Supabase Storage/TUS 경로와 웹 녹화 재생을 폐기했다. 데스크톱은 NAS 파일 메타데이터만 등록하고 웹은 로그인 필요 NAS HTTPS 다운로드만 제공한다.
 * 009·010 마이그레이션으로 조직별 NAS 위치·카메라 NAS 루트·녹화 상대 경로를 DB에 유지하며 기존 Storage 객체와 레거시 행은 삭제하지 않았다.
+* 2026-08-14 작업 20에서 기존 SMB 이송 구현을 실행 경로에서 제거하고 NAS HTTPS 4MiB 조각 이어올리기로 대체했다. 대용량 바이트는 Supabase를 통과하지 않으며 NAS 확정과 DB `ready` 전에는 로컬 원본을 보존한다.

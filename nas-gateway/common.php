@@ -64,7 +64,7 @@ function dfbb_safe_prefix($value)
     return $prefix;
 }
 
-function dfbb_verify_assertion(string $assertion)
+function dfbb_verified_assertion_payload(string $assertion)
 {
     if ($assertion === '' || strlen($assertion) > 16384) {
         return false;
@@ -97,6 +97,16 @@ function dfbb_verify_assertion(string $assertion)
     );
     openssl_free_key($publicKey);
     if ($verified !== 1) {
+        return false;
+    }
+
+    return $payload;
+}
+
+function dfbb_verify_assertion(string $assertion)
+{
+    $payload = dfbb_verified_assertion_payload($assertion);
+    if ($payload === false) {
         return false;
     }
 
@@ -143,6 +153,66 @@ function dfbb_verify_assertion(string $assertion)
         'sub' => strtolower($payload['sub']),
         'expires_at' => $sessionExpiresAt,
         'scopes' => $scopes,
+    ];
+}
+
+function dfbb_authorization_bearer()
+{
+    $authorization = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+    if (!is_string($authorization) || $authorization === '') {
+        if (function_exists('getallheaders')) {
+            $headers = getallheaders();
+            if (is_array($headers)) {
+                foreach ($headers as $name => $value) {
+                    if (strcasecmp((string) $name, 'Authorization') === 0) {
+                        $authorization = (string) $value;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (preg_match('/^Bearer[[:space:]]+(.+)$/i', trim((string) $authorization), $matches) !== 1) {
+        return false;
+    }
+    $token = trim($matches[1]);
+    return $token !== '' && strlen($token) <= 16384 ? $token : false;
+}
+
+function dfbb_verify_upload_assertion()
+{
+    $assertion = dfbb_authorization_bearer();
+    if ($assertion === false) {
+        return false;
+    }
+    $payload = dfbb_verified_assertion_payload($assertion);
+    if ($payload === false) {
+        return false;
+    }
+    $now = time();
+    $issuedAt = $payload['iat'] ?? null;
+    $expiresAt = $payload['exp'] ?? null;
+    $prefix = dfbb_safe_prefix($payload['prefix'] ?? null);
+    if (($payload['v'] ?? null) !== 1
+        || ($payload['iss'] ?? '') !== DFBB_ASSERTION_ISSUER
+        || ($payload['aud'] ?? '') !== DFBB_UPLOAD_ASSERTION_AUDIENCE
+        || ($payload['gateway_base_url'] ?? '') !== DFBB_GATEWAY_BASE_URL
+        || !dfbb_is_uuid($payload['sub'] ?? null)
+        || !dfbb_is_uuid($payload['camera_id'] ?? null)
+        || !dfbb_is_uuid($payload['location_id'] ?? null)
+        || !dfbb_is_uuid($payload['jti'] ?? null)
+        || !is_int($issuedAt) || !is_int($expiresAt)
+        || $issuedAt > $now + 60 || $expiresAt <= $now
+        || $expiresAt > $issuedAt + DFBB_UPLOAD_SESSION_MAX_SECONDS
+        || $prefix === false) {
+        return false;
+    }
+    return [
+        'device_id' => strtolower($payload['sub']),
+        'camera_id' => strtolower($payload['camera_id']),
+        'location_id' => strtolower($payload['location_id']),
+        'prefix' => $prefix,
+        'expires_at' => $expiresAt,
     ];
 }
 

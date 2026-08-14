@@ -19,7 +19,6 @@ public sealed partial class MainForm : KryptonForm
     private BlackboxStateMachine _stateMachine = null!;
     private RecordingService _recordingService = null!;
     private StorageCleanupService _cleanupService = new();
-    private NasRecordingTransferService? _nasRecordingTransferService;
     private RecordingCloudSyncService? _recordingCloudSyncService;
     private DeviceStreamCoordinator? _deviceStreamCoordinator;
     private EventLogService _eventLogService = null!;
@@ -411,9 +410,6 @@ public sealed partial class MainForm : KryptonForm
             _logger,
             TryCloneLiveStreamFrame);
         _deviceStreamCoordinator.Start();
-        _nasRecordingTransferService = new NasRecordingTransferService(_paths.RecVideos, _settings);
-        _nasRecordingTransferService.StatusChanged += OnNasRecordingTransferStatusChanged;
-        _nasRecordingTransferService.Start();
         var recordingMediaClient = new HttpRecordingMediaClient(
             HttpRecordingMediaClient.DeriveBaseAddress(
                 new Uri(_settings.DeviceRegistration.ApiBaseUrl, UriKind.Absolute)),
@@ -423,6 +419,7 @@ public sealed partial class MainForm : KryptonForm
             _settings,
             deviceTokenStore,
             recordingMediaClient,
+            _paths.RecVideos,
             Path.Combine(_paths.Root, "catalog-sync", "recording-catalog-state.json"));
         _recordingCloudSyncService.StatusChanged += OnRecordingCloudSyncStatusChanged;
         _recordingCloudSyncService.Start();
@@ -2384,7 +2381,7 @@ public sealed partial class MainForm : KryptonForm
             return;
         }
 
-        _nasRecordingTransferService?.Enqueue(filePath);
+        _recordingCloudSyncService?.TriggerRescan();
 
         _eventLogService.Append(new Models.EventLog
         {
@@ -2397,18 +2394,6 @@ public sealed partial class MainForm : KryptonForm
             MinHomeDiffScore = _minHomeDiffScore,
             ManualRecording = string.Equals(_currentTriggerReason, "Manual", StringComparison.OrdinalIgnoreCase)
         });
-    }
-
-    private void OnNasRecordingTransferStatusChanged(NasRecordingTransferStatus status)
-    {
-        if (status.IsTransferred)
-        {
-            _logger.Info($"NAS recording transfer completed. File={status.FileName}");
-            _recordingCloudSyncService?.TriggerRescan();
-            return;
-        }
-
-        _logger.Info($"NAS recording transfer deferred. File={status.FileName}, Error={status.ErrorCode ?? "unknown"}");
     }
 
     private void OnRecordingCloudSyncStatusChanged(RecordingCloudSyncStatus status)
@@ -2489,7 +2474,11 @@ public sealed partial class MainForm : KryptonForm
 
         try
         {
-            var result = _cleanupService.Cleanup(_settings.Storage, _settings.DeviceRegistration);
+            var result = _cleanupService.Cleanup(
+                _settings.Storage,
+                _recordingCloudSyncService is null
+                    ? _ => false
+                    : _recordingCloudSyncService.IsReadyForCleanup);
             _logger.Info($"Storage cleanup completed ({reason}). Deleted={result.DeletedFiles}, Failed={result.FailedFiles}, Freed={DiskUtils.FormatBytes(result.FreedBytes)}.");
         }
         catch (Exception ex)
@@ -2722,7 +2711,6 @@ public sealed partial class MainForm : KryptonForm
             result.CameraId,
             result.NasRelativePath,
             DateTimeOffset.UtcNow));
-        _nasRecordingTransferService?.TriggerRescan();
         _recordingCloudSyncService?.TriggerRescan();
     }
 
@@ -4065,12 +4053,6 @@ public sealed partial class MainForm : KryptonForm
         await ExitPlaybackModeAsync(clearPreview: false);
         _cleanupTimer?.Dispose();
         _fullScreenHintTimer?.Dispose();
-        if (_nasRecordingTransferService is not null)
-        {
-            _nasRecordingTransferService.StatusChanged -= OnNasRecordingTransferStatusChanged;
-            await _nasRecordingTransferService.DisposeAsync();
-            _nasRecordingTransferService = null;
-        }
         if (_recordingCloudSyncService is not null)
         {
             _recordingCloudSyncService.StatusChanged -= OnRecordingCloudSyncStatusChanged;

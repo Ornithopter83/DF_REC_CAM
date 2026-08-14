@@ -20,6 +20,11 @@ Deno.serve(async (request) => {
       return await registerCatalog(catalog[1], request);
     }
 
+    const uploadSession = route.match(/^devices\/([0-9a-f-]{36})\/nas-upload-session$/i);
+    if (request.method === "POST" && uploadSession) {
+      return await createDeviceNasUploadSession(uploadSession[1], request);
+    }
+
     if (request.method === "GET" && route === "portal/cameras") {
       return await listPortalCameras(request, publishableKey);
     }
@@ -65,6 +70,50 @@ async function registerCatalog(deviceId: string, request: Request): Promise<Resp
   return json({
     recording_id: recording.recording_id,
     catalog_state: recording.catalog_state,
+  }, 200, request);
+}
+
+async function createDeviceNasUploadSession(
+  deviceId: string,
+  request: Request,
+): Promise<Response> {
+  const deviceToken = bearerToken(request);
+  const body = await readJson(request);
+  const cameraId = requiredUuid(body, "camera_id");
+  const scope = firstRow(await adminRpc("get_device_nas_upload_scope", {
+    p_device_id: deviceId,
+    p_device_token: deviceToken,
+    p_camera_id: cameraId,
+  }));
+  const returnedDeviceId = String(scope.device_id ?? "");
+  const returnedCameraId = String(scope.camera_id ?? "");
+  const locationId = String(scope.nas_location_id ?? "");
+  if (returnedDeviceId !== deviceId || returnedCameraId !== cameraId || !isUuid(locationId)) {
+    throw new RequestError("invalid_database_response", 502);
+  }
+  const gatewayBaseUrl = validateGatewayBaseUrl(String(scope.gateway_base_url ?? ""));
+  const prefix = validateNasPrefix(scope.nas_relative_path);
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const expiresAt = issuedAt + (60 * 60);
+  const assertion = await signNasAssertion({
+    v: 1,
+    iss: "dfblackbox-recording-media",
+    aud: "dfblackbox-nas-upload-gateway",
+    sub: deviceId,
+    iat: issuedAt,
+    exp: expiresAt,
+    jti: crypto.randomUUID(),
+    gateway_base_url: gatewayBaseUrl,
+    camera_id: cameraId,
+    location_id: locationId,
+    prefix,
+  });
+  return json({
+    gateway_base_url: gatewayBaseUrl,
+    upload_url: new URL("upload.php", gatewayBaseUrl).toString(),
+    session_expires_at: new Date(expiresAt * 1000).toISOString(),
+    chunk_size_bytes: 4 * 1024 * 1024,
+    assertion,
   }, 200, request);
 }
 
@@ -241,18 +290,20 @@ function validateNasScope(value: unknown): { location_id: string; prefixes: stri
   if (!isUuid(locationId) || !Array.isArray(scope.prefixes)) {
     throw new RequestError("invalid_database_response", 502);
   }
-  const prefixes = scope.prefixes.map((entry) => {
-    if (typeof entry !== "string") throw new RequestError("invalid_database_response", 502);
-    const prefix = entry.trim().replace(/^\/+|\/+$/g, "");
-    if (
-      !prefix || prefix.length > 768 || prefix.includes("\\") || prefix.includes(":") ||
-      prefix.includes("//") || prefix.split("/").some((segment) => !segment || segment === "." || segment === "..")
-    ) {
-      throw new RequestError("invalid_database_response", 502);
-    }
-    return prefix;
-  });
+  const prefixes = scope.prefixes.map(validateNasPrefix);
   return { location_id: locationId, prefixes: [...new Set(prefixes)] };
+}
+
+function validateNasPrefix(value: unknown): string {
+  if (typeof value !== "string") throw new RequestError("invalid_database_response", 502);
+  const prefix = value.trim().replace(/^\/+|\/+$/g, "");
+  if (
+    !prefix || prefix.length > 768 || prefix.includes("\\") || prefix.includes(":") ||
+    prefix.includes("//") || prefix.split("/").some((segment) => !segment || segment === "." || segment === "..")
+  ) {
+    throw new RequestError("invalid_database_response", 502);
+  }
+  return prefix;
 }
 
 async function adminRpc(name: string, body: JsonObject): Promise<unknown> {
@@ -282,7 +333,10 @@ async function rpc(name: string, body: JsonObject, headers: Record<string, strin
     if (databaseError === "device_authentication_failed") {
       throw new RequestError(databaseError, 401);
     }
-    if (databaseError === "camera_not_found" || databaseError === "recording_not_found") {
+    if (
+      databaseError === "camera_not_found" || databaseError === "recording_not_found" ||
+      databaseError === "camera_nas_upload_scope_not_found"
+    ) {
       throw new RequestError(databaseError, 404);
     }
     if (databaseError === "nas_location_not_configured") {

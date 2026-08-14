@@ -23,7 +23,9 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
     private readonly AppSettings _settings;
     private readonly IDeviceTokenStore _tokenStore;
     private readonly HttpRecordingMediaClient _client;
+    private readonly string _recordingRoot;
     private readonly string _statePath;
+    private readonly object _stateSync = new();
     private readonly Channel<bool> _rescanSignal = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
     {
         SingleReader = true,
@@ -39,11 +41,13 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
         AppSettings settings,
         IDeviceTokenStore tokenStore,
         HttpRecordingMediaClient client,
+        string recordingRoot,
         string statePath)
     {
         _settings = settings;
         _tokenStore = tokenStore;
         _client = client;
+        _recordingRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(recordingRoot));
         _statePath = statePath;
         LoadState();
     }
@@ -66,6 +70,33 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
         if (_started)
         {
             _rescanSignal.Writer.TryWrite(true);
+        }
+    }
+
+    public bool IsReadyForCleanup(string filePath)
+    {
+        string relativePath;
+        try
+        {
+            string fullPath = Path.GetFullPath(filePath);
+            if (!fullPath.StartsWith(_recordingRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            relativePath = Path.GetRelativePath(_recordingRoot, fullPath).Replace('\\', '/');
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
+
+        DeviceRegistrationSettings registration = _settings.DeviceRegistration;
+        string stateKey = $"{registration.DeviceId}/{registration.CameraId}/{relativePath}";
+        lock (_stateSync)
+        {
+            return _states.TryGetValue(stateKey, out RecordingUploadState? state)
+                && string.Equals(state.SyncState, "ready", StringComparison.OrdinalIgnoreCase);
         }
     }
 
@@ -135,7 +166,6 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
         DeviceRegistrationSettings registration = _settings.DeviceRegistration;
         if (string.IsNullOrWhiteSpace(registration.DeviceId)
             || string.IsNullOrWhiteSpace(registration.CameraId)
-            || string.IsNullOrWhiteSpace(registration.NasRootFolder)
             || string.IsNullOrWhiteSpace(registration.NasRelativePath))
         {
             return;
@@ -147,19 +177,7 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
             return;
         }
 
-        string recordingsRoot;
-        try
-        {
-            string cameraRoot = NasProvisioningService.ResolveWithinRoot(
-                registration.NasRootFolder,
-                registration.NasRelativePath);
-            recordingsRoot = Path.Combine(cameraRoot, "recordings");
-            if (!Directory.Exists(recordingsRoot))
-            {
-                return;
-            }
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+        if (!Directory.Exists(_recordingRoot))
         {
             return;
         }
@@ -167,7 +185,7 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
         IEnumerable<string> paths;
         try
         {
-            paths = Directory.EnumerateFiles(recordingsRoot, "*.mp4", SearchOption.AllDirectories)
+            paths = Directory.EnumerateFiles(_recordingRoot, "*.mp4", SearchOption.AllDirectories)
                 .Where(IsCompletedRecording)
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
@@ -181,7 +199,7 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             await SyncFileAsync(
-                recordingsRoot,
+                _recordingRoot,
                 path,
                 registration.DeviceId,
                 registration.CameraId,
@@ -221,7 +239,12 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
             {
                 return;
             }
-            if (_states.TryGetValue(stateKey, out RecordingUploadState? existing)
+            RecordingUploadState? existing;
+            lock (_stateSync)
+            {
+                _states.TryGetValue(stateKey, out existing);
+            }
+            if (existing is not null
                 && existing.FileSizeBytes == fileLength
                 && existing.LastWriteTimeUtcTicks == writeTicks
                 && string.Equals(existing.SyncState, "ready", StringComparison.OrdinalIgnoreCase))
@@ -257,7 +280,10 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
                 fingerprint,
                 existingRecordingId,
                 "pending");
-            _states[stateKey] = pendingState;
+            lock (_stateSync)
+            {
+                _states[stateKey] = pendingState;
+            }
             await SaveStateAsync(cancellationToken);
 
             DateTimeOffset lastModified = new(before.LastWriteTimeUtc, TimeSpan.Zero);
@@ -265,6 +291,25 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
             string nasRelativePath = BuildNasRecordingPath(
                 _settings.DeviceRegistration.NasRelativePath,
                 relativePath);
+            CreateNasUploadSessionResponse uploadSession = await _client.CreateNasUploadSessionAsync(
+                deviceId,
+                deviceToken,
+                cameraId,
+                cancellationToken);
+            string uploadedNasRelativePath = await _client.UploadToNasAsync(
+                uploadSession,
+                filePath,
+                relativePath,
+                nasRelativePath,
+                fileLength,
+                fingerprint,
+                lastModified,
+                cancellationToken);
+            if (!string.Equals(uploadedNasRelativePath, nasRelativePath, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("The NAS completed the upload at an unexpected path.");
+            }
+
             RegisterRecordingCatalogResponse catalog = await _client.RegisterCatalogAsync(
                 deviceId,
                 deviceToken,
@@ -302,11 +347,14 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
         string recordingId,
         CancellationToken cancellationToken)
     {
-        _states[stateKey] = state with
+        lock (_stateSync)
         {
-            RecordingId = recordingId,
-            SyncState = "ready"
-        };
+            _states[stateKey] = state with
+            {
+                RecordingId = recordingId,
+                SyncState = "ready"
+            };
+        }
         await SaveStateAsync(cancellationToken);
     }
 
@@ -337,12 +385,18 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
                 JsonSerializer.Deserialize<Dictionary<string, RecordingUploadState>>(json, StateJsonOptions);
             if (loaded is not null)
             {
-                _states = new Dictionary<string, RecordingUploadState>(loaded, StringComparer.OrdinalIgnoreCase);
+                lock (_stateSync)
+                {
+                    _states = new Dictionary<string, RecordingUploadState>(loaded, StringComparer.OrdinalIgnoreCase);
+                }
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
-            _states = new Dictionary<string, RecordingUploadState>(StringComparer.OrdinalIgnoreCase);
+            lock (_stateSync)
+            {
+                _states = new Dictionary<string, RecordingUploadState>(StringComparer.OrdinalIgnoreCase);
+            }
         }
     }
 
@@ -357,7 +411,11 @@ public sealed class RecordingCloudSyncService : IAsyncDisposable
         string temporaryPath = _statePath + ".tmp";
         try
         {
-            string json = JsonSerializer.Serialize(_states, StateJsonOptions);
+            string json;
+            lock (_stateSync)
+            {
+                json = JsonSerializer.Serialize(_states, StateJsonOptions);
+            }
             await File.WriteAllTextAsync(temporaryPath, json, cancellationToken);
             File.Move(temporaryPath, _statePath, overwrite: true);
         }

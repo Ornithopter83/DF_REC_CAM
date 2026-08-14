@@ -41,7 +41,7 @@ DFBlackbox는 .NET 8 Windows Forms 기반 블랙박스/감시 녹화 애플리�
 ### DB
 
 - Supabase PostgreSQL을 기기 등록, 조직·장치·카메라 권한, 실시간 시청 lease, 녹화 카탈로그에 사용한다.
-- `supabase/migrations`의 001~011이 원격 프로젝트에 적용되어 있다.
+- `supabase/migrations`의 001~012가 원격 프로젝트에 적용되어 있다.
 - 모든 대용량 녹화 파일은 NAS에만 저장하고, DB에는 NAS 식별자·상대 경로·파일명·크기·녹화 시각 등 카탈로그 메타데이터만 저장한다.
 - 기존 비공개 `dfblackbox-recordings` Storage와 관련 스키마는 배포된 레거시 상태이며, 새 녹화 파일을 업로드하는 경로로 사용하지 않는다. 기존 객체 삭제는 별도 승인 없이 수행하지 않는다.
 - DB 스키마 변경은 요청 없이는 하지 않는다.
@@ -52,10 +52,12 @@ DFBlackbox는 .NET 8 Windows Forms 기반 블랙박스/감시 녹화 애플리�
 - Supabase Edge Function `device-registration`, `media-session`, `recording-media`를 사용한다.
 - 실시간 영상은 LiveKit Cloud RTMPS Ingress로 송출하고 웹에서 WebRTC로 구독한다.
 - 웹 영상 재생은 PC가 온라인일 때의 LiveKit 실시간 스트리밍만 제공한다.
-- 녹화본은 웹 내 재생하지 않고, 권한이 확인된 사용자에게 NAS 다운로드 경로만 제공한다. 데스크톱은 파일 바이트를 업로드하지 않고 NAS 카탈로그 메타데이터만 등록한다.
+- 녹화본은 웹 내 재생하지 않고, 권한이 확인된 사용자에게 NAS 다운로드 경로만 제공한다. 데스크톱은 Supabase Storage를 거치지 않고 NAS HTTPS Gateway에 완성 MP4를 직접 이어올린 뒤 카탈로그 메타데이터만 DB에 등록한다.
 - NAS1dual의 Apache HTTPS에는 `/dfblackbox/` PHP 다운로드 Gateway가 배포되어 있다. 웹 로그인 사용자는 Edge Function이 서명한 단기 증명으로 8시간 HttpOnly NAS 세션을 만들며, Gateway는 권한 범위의 `recordings/*.mp4`에 대해서만 attachment·Range 다운로드를 제공한다.
 - NAS 로그인 자격증명은 웹·DB·Edge Function이 보관하지 않는다. NAS에는 공개키만 두고 서명 개인키는 Supabase Edge Secret에만 둔다.
 - 인증 정보와 전체 RTSP URL은 로그에 남기지 않는다.
+- 완성 MP4 이송은 ipDISK Drive·SMB 대신 내·외부망 공통 NAS HTTPS Gateway를 사용한다. Edge가 장치 토큰과 카메라 소유권을 확인해 범위 제한 assertion을 발급하고, NAS가 조각 offset·전체 길이·SHA-256을 확인한 뒤 최종 파일로 전환한다.
+- NAS 또는 외부망이 끊기면 로컬 완성본을 보존하고 다음 실행이나 주기 재검사에서 NAS offset부터 재개한다. NAS 확정과 DB 카탈로그 `ready`가 모두 완료된 파일만 보존기간 자동 정리 대상이 된다.
 
 ### 배포/운영
 

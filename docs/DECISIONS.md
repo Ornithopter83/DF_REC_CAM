@@ -98,3 +98,6 @@ YYYY-MM-DD
 - NAS 다운로드 Gateway는 NAS에 저장된 공개키로 증명을 검증하고 조직 권한에서 파생된 카메라 경로의 `recordings/*.mp4`만 attachment·Range로 제공한다. 목록·업로드·삭제와 웹 재생은 제공하지 않는다.
 - 녹화 목록은 최초 로그인과 사용자의 전체/목록 새로고침에서 DB 카탈로그를 조회한다. 장치별 온라인 표시는 명령 폴링에서 갱신한 공인 IP와 마지막 heartbeat를 기준으로 하며 파일 목록과 독립적으로 갱신한다.
 - 실제 NAS의 117,008,916바이트 MP4는 파일 이동이나 클라우드 업로드 없이 DB 카탈로그 `ready` 등록이 확인되었다.
+- 신규 녹화 이송은 ipDISK Drive·SMB를 요구하지 않고 내·외부망에서 동일한 NAS HTTPS Gateway를 사용한다. 장치 토큰은 Edge에만 보내며 NAS에는 장치·카메라·NAS 위치·경로가 제한된 1시간 RS256 assertion만 전달한다.
+- NAS 업로드는 4MiB 조각과 서버 offset으로 재개하고, NAS가 전체 길이와 SHA-256을 확인한 뒤 같은 볼륨의 최종 `recordings/*.mp4`로 원자적 전환한다. NAS 확정과 DB 카탈로그 `ready` 전에는 로컬 완성본을 자동 삭제하지 않는다.
+- 012 마이그레이션과 `recording-media`·NAS Gateway를 원격 배포했다. 4MiB에서 중단한 117,008,977바이트 MP4를 앱 재시작 후 이어올려 로컬·NAS·웹 다운로드 SHA-256 일치, DB `ready`, 웹 목록과 별도 NAS 로그인 없는 다운로드를 확인했다.

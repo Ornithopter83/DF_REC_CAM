@@ -9,6 +9,11 @@ const DFBB_SESSION_COOKIE_PATH = '/dfblackbox/';
 const DFBB_SESSION_MAX_SECONDS = 28800;
 const DFBB_ASSERTION_ISSUER = 'dfblackbox-recording-media';
 const DFBB_ASSERTION_AUDIENCE = 'dfblackbox-nas-gateway';
+const DFBB_UPLOAD_ASSERTION_AUDIENCE = 'dfblackbox-nas-upload-gateway';
+const DFBB_UPLOAD_SESSION_MAX_SECONDS = 3900;
+const DFBB_UPLOAD_CHUNK_MAX_BYTES = 4194304;
+const DFBB_UPLOAD_MAX_FILE_BYTES = 10995116277760;
+const DFBB_UPLOAD_STATE_RELATIVE_PATH = 'temp/dfblackbox-uploads';
 
 const DFBB_ASSERTION_PUBLIC_KEY = <<<'PEM'
 -----BEGIN PUBLIC KEY-----
