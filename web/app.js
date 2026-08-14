@@ -781,7 +781,14 @@
       );
       if (selectedRecording?.id !== recording.id) return;
       const downloadUrl = requireNasDownloadUrl(result.download_url);
-      window.location.assign(downloadUrl);
+
+      const anchor = document.createElement("a");
+      anchor.href = downloadUrl;
+      anchor.target = "_blank";
+      anchor.rel = "noopener";
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
       showNotice("NAS에서 녹화영상 다운로드를 시작했습니다.", "success");
     } catch (error) {
       showNotice(error.message || "녹화영상 다운로드를 준비하지 못했습니다.", "error");
