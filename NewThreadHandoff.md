@@ -12,6 +12,7 @@
 - `docs/PROJECT_CONTEXT.md`
 - `docs/DECISIONS.md`
 - `CurrentWork.md`
+- `docs/DFBlackbox_프로젝트_구성_및_설정_가이드.docx`
 - `tasks/20_NAS_HTTPS_이어올리기.md`
 - `tasks/21_신규PC_NAS_HTTPS_프로비저닝.md`
 - `tasks/22_등록명_NAS경로_임시파일완료경계.md`

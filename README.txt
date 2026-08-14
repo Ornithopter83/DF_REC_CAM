@@ -97,6 +97,7 @@ dotnet publish DFBlackbox\DFBlackbox.csproj -c Release -o .publishcheck
 - 새 스레드 이주: `NewThreadHandoff.md`
 - 프로젝트 맥락: `docs/PROJECT_CONTEXT.md`
 - 결정 기록: `docs/DECISIONS.md`
+- 구성·설정 가이드: `docs/DFBlackbox_프로젝트_구성_및_설정_가이드.docx`
 - 세부 작업: `tasks/*.md`
 
 보안 주의

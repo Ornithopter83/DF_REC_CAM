@@ -61,6 +61,7 @@
 - GitHub Pages: `스트리밍` 브랜치의 `web/` 자동 배포
 - 최근 Release 빌드: 경고 0개, 오류 0개
 - 최근 publish: `.publishcheck/DFBlackbox.exe` 생성 성공
+- 프로젝트 구성·설정 Word 가이드: `docs/DFBlackbox_프로젝트_구성_및_설정_가이드.docx`
 
 ## 남은 실제 장비 검증
 
